@@ -5,7 +5,10 @@ const server = serve({
   port: Number(process.env.PORT ?? 3001),
   routes: {
     "/": index,
-    "/api/health": { GET: () => Response.json({ ok: true, service: "bun-react-spacetime" }) },
+    "/api/health": { GET: () => Response.json({ ok: true, service: "bun-react" }) },
+    "/api/hello": {
+      GET: () => Response.json({ message: "Hello from Bun and React" }),
+    },
   },
   development: { hmr: true, console: true },
 });

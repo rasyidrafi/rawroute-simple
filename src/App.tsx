@@ -1,53 +1,54 @@
 import { useEffect, useState } from "react";
-import { DbConnection } from "./module_bindings/index.js";
 import "./index.css";
 
-// Bun inlines literal process.env.* references into browser bundles when the
-// matching [serve.static].env rule is configured in bunfig.toml.
-const HOST = process.env.BUN_PUBLIC_SPACETIMEDB_HOST ?? "ws://localhost:3000";
-const DB_NAME = process.env.BUN_PUBLIC_SPACETIMEDB_DB_NAME ?? "rawroute-simple";
+type HelloResponse = {
+  message: string;
+};
 
 export function App() {
-  const [connection, setConnection] = useState<DbConnection | null>(null);
-  const [people, setPeople] = useState<string[]>([]);
-  const [name, setName] = useState("");
-  const [status, setStatus] = useState("Connecting to SpacetimeDB…");
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const conn = DbConnection.builder()
-      .withUri(HOST).withDatabaseName(DB_NAME)
-      .withToken(localStorage.getItem("spacetimedb-token") ?? undefined)
-      .onConnect((connected, _identity, token) => {
-        localStorage.setItem("spacetimedb-token", token);
-        setConnection(connected); setStatus("Connected");
-        connected.subscriptionBuilder().onApplied(ctx => {
-          setPeople([...ctx.db.person.iter()].map(person => person.name));
-        }).subscribeToAllTables();
-        connected.db.person.onInsert(() => setPeople([...connected.db.person.iter()].map(person => person.name)));
+    const controller = new AbortController();
+
+    fetch("/api/hello", { signal: controller.signal })
+      .then(async response => {
+        if (!response.ok) throw new Error(`Request failed with ${response.status}`);
+        return response.json() as Promise<HelloResponse>;
       })
-      .onConnectError((_ctx, error) => setStatus(`Connection error: ${error.message}`))
-      .onDisconnect(() => setStatus("Disconnected"))
-      .build();
-    return () => conn.disconnect();
+      .then(data => setMessage(data.message))
+      .catch(fetchError => {
+        if (fetchError instanceof DOMException && fetchError.name === "AbortError") return;
+        setError(fetchError instanceof Error ? fetchError.message : "Request failed");
+      })
+      .finally(() => setIsLoading(false));
+
+    return () => controller.abort();
   }, []);
 
-  function addPerson(event: React.FormEvent) {
-    event.preventDefault(); const value = name.trim();
-    if (!value || !connection) return;
-    connection.reducers.add({ name: value }); setName("");
-  }
-
-  return <main className="app">
-    <p className="eyebrow">Bun · React · SpacetimeDB</p>
-    <h1>Realtime app foundation</h1><p className="status">{status}</p>
-    <form onSubmit={addPerson} className="person-form">
-      <input value={name} onChange={event => setName(event.target.value)} placeholder="Your name" />
-      <button type="submit" disabled={!connection}>Add person</button>
-    </form>
-    <section className="people"><h2>People ({people.length})</h2>
-      {people.length === 0 ? <p>No people yet.</p> : <ul>{people.map(person => <li key={person}>{person}</li>)}</ul>}
-    </section>
-  </main>;
+  return (
+    <main className="app-shell">
+      <section className="hero" aria-labelledby="page-title">
+        <p className="eyebrow">Bun fullstack starter</p>
+        <h1 id="page-title">One server.<br />React on the edge.</h1>
+        <p className="intro">
+          Bun serves this page, bundles the React client, and handles the API request below.
+        </p>
+        <div className="api-card" aria-live="polite">
+          <div className="api-card-heading">
+            <span className={`status-dot ${error ? "is-error" : ""}`} />
+            <span>GET /api/hello</span>
+          </div>
+          {isLoading && <p className="api-result">Calling the Bun API...</p>}
+          {message && <p className="api-result">{message}</p>}
+          {error && <p className="api-result error">{error}</p>}
+        </div>
+        <p className="footer-note">HTML import + Bun.serve + React</p>
+      </section>
+    </main>
+  );
 }
 
 export default App;

@@ -8,11 +8,9 @@
     "dev:preview": "bash scripts/dev-preview.sh",
     "preview": "bash scripts/preview.sh",
     "start": "NODE_ENV=production bun src/index.ts",
-    "build": "bun build --target=bun --production --outdir=dist ./src/index.ts",
-    "spacetime:generate": "spacetime generate --lang typescript --out-dir src/module_bindings --module-path spacetimedb"
+    "build": "bun build --target=bun --production --outdir=dist ./src/index.ts"
   },
   "dependencies": {
-    "spacetimedb": "2.10.*",
     "react": "^19",
     "react-dom": "^19"
   },

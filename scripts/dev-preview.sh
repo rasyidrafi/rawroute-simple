@@ -15,8 +15,6 @@ trap cleanup EXIT INT TERM
 
 echo "Starting Bun app on http://${HOST}:${PORT}..."
 PORT="$PORT" \
-BUN_PUBLIC_SPACETIMEDB_HOST="${BUN_PUBLIC_SPACETIMEDB_HOST:-ws://localhost:3000}" \
-BUN_PUBLIC_SPACETIMEDB_DB_NAME="${BUN_PUBLIC_SPACETIMEDB_DB_NAME:-rawroute-simple}" \
 bun run dev >"$LOG_FILE" 2>&1 &
 APP_PID=$!
 
