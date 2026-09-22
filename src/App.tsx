@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
 import "./index.css";
 
 type HelloResponse = {
@@ -45,6 +46,7 @@ export function App() {
           {message && <p className="api-result">{message}</p>}
           {error && <p className="api-result error">{error}</p>}
         </div>
+        <Button type="button" className="mt-6">shadcn Button</Button>
         <p className="footer-note">HTML import + Bun.serve + React</p>
       </section>
     </main>
