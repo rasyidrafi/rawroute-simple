@@ -22,6 +22,10 @@ declare module "bun" {
   interface Env {
     DATABASE_URL?: string;
     DATABASE_AUTH_TOKEN?: string;
+    AUTH_DEFAULT_PASSWORD?: string;
+    APP_ORIGIN?: string;
+    AUTH_COOKIE_SECURE?: string;
+    TRUST_PROXY_HEADERS?: string;
     PORT?: string;
   }
 }

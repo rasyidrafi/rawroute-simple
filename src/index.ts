@@ -1,7 +1,11 @@
 import { serve } from "bun";
 import index from "./index.html";
+import { ensureAuthSchema, ensureDefaultPassword, login, logout, status } from "./lib/auth";
 import { checkDatabaseConnection } from "./lib/db";
 import { env } from "./lib/env";
+
+await ensureAuthSchema();
+await ensureDefaultPassword();
 
 const server = serve({
   port: env.port,
@@ -22,6 +26,9 @@ const server = serve({
         }
       },
     },
+    "/api/auth/login": { POST: login },
+    "/api/auth/logout": { POST: logout },
+    "/api/auth/status": { GET: status },
     "/api/hello": {
       GET: () => Response.json({ message: "Hello from Bun and React" }),
     },
