@@ -79,7 +79,7 @@ function DashboardContent({
     >
       <AppSidebar route={route} onNavigate={navigate} onLogout={onLogout} />
       <SidebarInset>
-        <div className="flex min-h-0 flex-1 flex-col bg-background">
+        <div className="flex min-h-0 flex-1 flex-col bg-[#f6f5f1] dark:bg-background">
           <header className="sticky top-0 z-30 flex h-[var(--header-height)] shrink-0 items-center border-b bg-background/90 backdrop-blur-md">
             <div className="flex w-full items-center gap-3 px-4 lg:px-6">
               <SidebarTrigger className="-ml-1" />
