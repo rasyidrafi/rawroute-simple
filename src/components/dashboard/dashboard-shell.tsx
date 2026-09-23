@@ -23,6 +23,7 @@ const titles: Record<DashboardRoute, string> = {
   budgets: "Budgets",
   pricing: "Model Pricing",
   logs: "Console Log",
+  cliproxy: "CLIProxyAPI",
   settings: "Settings",
   "tool-overview": "Overview",
   "tool-tools": "Tools",

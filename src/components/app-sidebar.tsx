@@ -16,6 +16,7 @@ import {
   ServerIcon,
   SettingsIcon,
   ShieldCheckIcon,
+  TerminalIcon,
   Trash2Icon,
   WalletCardsIcon,
   WrenchIcon,
@@ -76,6 +77,7 @@ export type DashboardRoute =
   | "budgets"
   | "pricing"
   | "logs"
+  | "cliproxy"
   | "settings"
   | "tool-overview"
   | "tool-tools"
@@ -108,6 +110,7 @@ const aiGroups: Group[] = [
   {
     label: "System",
     items: [
+      { route: "cliproxy", title: "CLIProxyAPI", icon: TerminalIcon },
       { route: "logs", title: "Console Log", icon: LogsIcon },
       { route: "settings", title: "Settings", icon: SettingsIcon },
     ],

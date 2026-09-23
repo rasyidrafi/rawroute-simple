@@ -1,0 +1,33 @@
+services:
+  rawroute:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      RAWROUTE_DATA_DIR: /data
+      DATABASE_URL: file:/data/rawroute.db
+      APP_ORIGIN: ${APP_ORIGIN:?Set APP_ORIGIN in .env to the browser-facing origin}
+      AUTH_DEFAULT_PASSWORD: ${AUTH_DEFAULT_PASSWORD:?Set AUTH_DEFAULT_PASSWORD in .env}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
+    ports:
+      - "3001:3001"
+    volumes:
+      - rawroute-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - bun
+        - -e
+        - "fetch('http://127.0.0.1:3001/api/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  rawroute-data:

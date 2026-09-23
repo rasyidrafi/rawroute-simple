@@ -45,6 +45,7 @@ import {
   WalletCardsIcon,
 } from "lucide-react";
 import { type DashboardRoute } from "@/components/app-sidebar";
+import { CliproxyPage } from "@/components/dashboard/cliproxy-page";
 import {
   ChartContainer,
   ChartTooltip,
@@ -194,7 +195,7 @@ export function DashboardViews({
   selectedProvider,
   onSelectProvider,
 }: Props) {
-  const [keys, setKeys] = useState(initialGatewayKeys);
+  const keys = initialGatewayKeys;
   const [providers, setProviders] = useState(initialProviders);
   const [models, setModels] = useState(initialModels);
   const [codexModels, setCodexModels] = useState(initialCodexModels);
@@ -203,7 +204,8 @@ export function DashboardViews({
   const [budgets, setBudgets] = useState(initialBudgets);
   const [priceGroups, setPriceGroups] = useState(initialPriceGroups);
   if (route === "endpoint")
-    return <EndpointKeys keys={keys} setKeys={setKeys} />;
+    return <EndpointKeys />;
+  if (route === "cliproxy") return <CliproxyPage />;
   if (route === "providers")
     return selectedProvider ? (
       <ProviderDetail
@@ -249,44 +251,77 @@ export function DashboardViews({
   return <ToolGateway route={route} onNavigate={onNavigate} />;
 }
 
-function EndpointKeys({
-  keys,
-  setKeys,
-}: {
-  keys: GatewayKey[];
-  setKeys: React.Dispatch<React.SetStateAction<GatewayKey[]>>;
-}) {
-  const [editor, setEditor] = useState<Editor>(null);
-  const [editing, setEditing] = useState<GatewayKey | null>(null);
-  const [name, setName] = useState("");
-  const [created, setCreated] = useState<string | null>(null);
-  const [remove, setRemove] = useState<GatewayKey | null>(null);
-  function open(key?: GatewayKey) {
-    setEditing(key ?? null);
-    setName(key?.name ?? "");
-    setEditor("key");
-  }
-  function save(event: FormEvent) {
-    event.preventDefault();
-    if (!name.trim()) return;
-    if (editing)
-      setKeys((items) =>
-        items.map((item) =>
-          item.id === editing.id ? { ...item, name } : item,
-        ),
-      );
-    else {
-      const value = `rr_live_${crypto.randomUUID().replaceAll("-", "").slice(0, 20)}`;
-      setKeys((items) => [
-        { id: crypto.randomUUID(), name, value, created: "Just now" },
-        ...items,
-      ]);
-      setCreated(value);
-    }
-    setEditor(null);
-    notify(editing ? "Gateway key renamed" : "Gateway key created");
-  }
+function EndpointKeys() {
+  const [apiKey, setApiKey] = useState<string | null>(null);
+  const [keyVisible, setKeyVisible] = useState(false);
+  const [keyLoading, setKeyLoading] = useState(false);
+  const [keyError, setKeyError] = useState<string | null>(null);
   const endpoint = typeof window === "undefined" ? "/v1" : `${window.location.origin}/v1`;
+  async function revealKey() {
+    if (keyVisible) {
+      setKeyVisible(false);
+      setApiKey(null);
+      return;
+    }
+    if (apiKey) {
+      setKeyVisible(true);
+      return;
+    }
+    setKeyLoading(true);
+    setKeyError(null);
+    try {
+      const response = await fetch("/api/cliproxy/key", {
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+      });
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch {
+        throw new Error(
+          response.ok
+            ? "The key endpoint returned invalid JSON."
+            : `Could not load the key (HTTP ${response.status}).`,
+        );
+      }
+      if (!response.ok) {
+        const body = payload as { error?: unknown; message?: unknown } | null;
+        throw new Error(
+          typeof body?.error === "string"
+            ? body.error
+            : typeof body?.message === "string"
+              ? body.message
+              : `Could not load the key (HTTP ${response.status}).`,
+        );
+      }
+      const body = payload as { key?: unknown; apiKey?: unknown } | string | null;
+      const value =
+        typeof body === "string"
+          ? body
+          : typeof body?.key === "string"
+            ? body.key
+            : typeof body?.apiKey === "string"
+              ? body.apiKey
+              : null;
+      if (!value) throw new Error("The key endpoint response did not include an API key.");
+      setApiKey(value);
+      setKeyVisible(true);
+    } catch (error) {
+      setKeyError(error instanceof Error ? error.message : "Could not load the CLIProxyAPI key.");
+    } finally {
+      setKeyLoading(false);
+    }
+  }
+  async function copyNativeKey() {
+    if (!apiKey) return;
+    try {
+      if (!navigator.clipboard) throw new Error("Clipboard access is unavailable.");
+      await navigator.clipboard.writeText(apiKey);
+      notify("CLIProxyAPI key copied");
+    } catch {
+      setKeyError("Clipboard access failed. Reveal the key to select and copy it manually.");
+    }
+  }
   return (
     <Page>
       <Card>
@@ -296,12 +331,12 @@ function EndpointKeys({
             <CardTitle>API Endpoint</CardTitle>
           </div>
           <CardDescription>
-            Example API base URL for this local mock. The Bun server does not route gateway requests.
+            OpenAI-compatible base URL on this same origin. Requests are forwarded to CLIProxyAPI when the managed service is installed and running.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex items-center gap-3 rounded-lg border bg-muted/30 p-3">
-            <Badge variant="secondary">Gateway</Badge>
+            <Badge variant="secondary">OpenAI API</Badge>
             <code className="min-w-0 flex-1 truncate text-sm">
               {endpoint}
             </code>
@@ -318,131 +353,39 @@ function EndpointKeys({
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle>Gateway API keys</CardTitle>
+          <CardTitle>CLIProxyAPI key</CardTitle>
           <CardDescription>
-            Demo keys for the local dashboard mock. They are not accepted by a gateway backend.
+            Native proxy credential for authenticated API requests. This administrator-only secret is fetched on demand and hidden by default.
           </CardDescription>
-          <CardAction>
-            <Button onClick={() => open()}>
-              <PlusIcon />
-              Create key
-            </Button>
-          </CardAction>
         </CardHeader>
         <CardContent className="space-y-3">
-          {!keys.length && (
-            <div className="rounded-lg border border-dashed p-8 text-center">
-              <p className="font-medium">No gateway API keys</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Create a key before sending requests through this workspace.
-              </p>
+          <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-3 sm:flex-row sm:items-center">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">Administrator-managed credential</p>
+              <code className="mt-1 block break-all text-xs text-muted-foreground">
+                {apiKey && keyVisible ? apiKey : "Hidden until explicitly revealed"}
+              </code>
             </div>
+            <div className="flex shrink-0 gap-2">
+              <Button variant="outline" onClick={() => void revealKey()} disabled={keyLoading}>
+                {keyLoading ? <RefreshCwIcon className="animate-spin" /> : null}
+                {keyVisible ? "Hide key" : apiKey ? "Reveal key" : "Load & reveal"}
+              </Button>
+              {apiKey && keyVisible && (
+                <Button variant="outline" onClick={() => void copyNativeKey()}>
+                  <CopyIcon /> Copy
+                </Button>
+              )}
+            </div>
+          </div>
+          {keyError && (
+            <p role="alert" className="text-sm text-destructive">{keyError}</p>
           )}
-          {keys.map((key) => (
-            <div key={key.id} className="flex items-center gap-3 rounded-lg border bg-muted/30 p-3">
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium">{key.name}</div>
-                <code className="block truncate text-xs text-muted-foreground">
-                  {key.value.slice(0, 7)}••••••••••••••••••••{key.value.slice(-4)}
-                </code>
-              </div>
-              <Button size="icon-sm" variant="outline" aria-label={`Copy ${key.name}`} onClick={() => copy(key.value)}>
-                <CopyIcon />
-              </Button>
-              <Button size="icon-sm" variant="outline" aria-label={`Edit ${key.name}`} onClick={() => open(key)}>
-                <Settings2Icon />
-              </Button>
-              <Button size="icon-sm" variant="destructive" aria-label={`Delete ${key.name}`} onClick={() => setRemove(key)}>
-                <Trash2Icon />
-              </Button>
-            </div>
-          ))}
+          <p className="text-xs text-muted-foreground">
+            Dashboard-created gateway keys are not supported and are not shown here. Use this native key as a Bearer token with the endpoint above.
+          </p>
         </CardContent>
       </Card>
-      <Dialog
-        open={editor === "key"}
-        onOpenChange={(openState) => !openState && setEditor(null)}
-      >
-        <DialogContent>
-          <form onSubmit={save}>
-            <DialogHeader>
-              <DialogTitle>
-                {editing ? "Edit gateway key" : "Create gateway key"}
-              </DialogTitle>
-              <DialogDescription>
-                {editing
-                  ? "The secret value cannot be changed."
-                  : "A secret value will be shown once after creation."}
-              </DialogDescription>
-            </DialogHeader>
-            <div className="py-4">
-              <label htmlFor="gateway-key-name" className="text-sm font-medium">
-                Key name
-              </label>
-              <Input
-                id="gateway-key-name"
-                autoFocus
-                className="mt-2"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="Production gateway"
-              />
-            </div>
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setEditor(null)}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={!name.trim()}>
-                {editing ? "Save name" : "Create key"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-      <Dialog
-        open={Boolean(created)}
-        onOpenChange={(openState) => !openState && setCreated(null)}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>API key created</DialogTitle>
-            <DialogDescription>
-              Copy this secret now. This mock dialog is the only place it is
-              fully revealed.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex gap-2 rounded-lg border bg-muted/30 p-3">
-            <code className="min-w-0 flex-1 break-all text-xs">{created}</code>
-            <Button
-              size="icon-sm"
-              variant="outline"
-              aria-label="Copy created key"
-              onClick={() => created && copy(created)}
-            >
-              <CopyIcon />
-            </Button>
-          </div>
-          <DialogFooter>
-            <Button onClick={() => setCreated(null)}>Done</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      <Confirm
-        open={Boolean(remove)}
-        onOpenChange={(openState) => !openState && setRemove(null)}
-        title={`Delete ${remove?.name}?`}
-        description="Clients using this gateway key will no longer have access."
-        onConfirm={() => {
-          if (remove)
-            setKeys((items) => items.filter((item) => item.id !== remove.id));
-          setRemove(null);
-          notify("Gateway key deleted");
-        }}
-      />
     </Page>
   );
 }
