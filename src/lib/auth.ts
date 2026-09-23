@@ -6,6 +6,7 @@ const SESSION_COOKIE_NAME = "rawroute_session";
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24;
 const SESSION_MAX_AGE_MS = SESSION_MAX_AGE_SECONDS * 1000;
 const MIN_PASSWORD_LENGTH = 8;
+const MIN_NEW_PASSWORD_LENGTH = 12;
 const MAX_PASSWORD_LENGTH = 128;
 const MAX_AUTH_BODY_BYTES = 16 * 1024;
 const MAX_LOGIN_ATTEMPT_ENTRIES = 10_000;
@@ -137,8 +138,12 @@ export async function ensureDefaultPassword(): Promise<void> {
     if (passwordMatches || Number(existing.is_default) === 0) return;
 
     await db.execute({
-      sql: "UPDATE auth_credentials SET password_hash = ?, updated_at = ? WHERE id = 1",
-      args: [await Bun.password.hash(password), Date.now()],
+      sql: `
+        UPDATE auth_credentials
+        SET password_hash = ?, updated_at = ?
+        WHERE id = 1 AND password_hash = ? AND is_default = 1
+      `,
+      args: [await Bun.password.hash(password), Date.now(), existing.password_hash],
     });
     return;
   }
@@ -147,6 +152,7 @@ export async function ensureDefaultPassword(): Promise<void> {
     sql: `
       INSERT INTO auth_credentials (id, password_hash, is_default, updated_at)
       VALUES (1, ?, 1, ?)
+      ON CONFLICT(id) DO NOTHING
     `,
     args: [await Bun.password.hash(password), Date.now()],
   });
@@ -162,9 +168,14 @@ async function readPassword(request: BunRequest): Promise<string> {
     throw new AuthError("Content-Type must be application/json.", 415);
   }
 
-  const contentLength = Number(request.headers.get("content-length"));
-  if (Number.isFinite(contentLength) && contentLength > MAX_AUTH_BODY_BYTES) {
-    throw new AuthError("Request body is too large.", 413);
+  const contentLength = request.headers.get("content-length");
+  if (contentLength !== null) {
+    if (!/^\d+$/.test(contentLength)) {
+      throw new AuthError("Content-Length is invalid.", 400);
+    }
+    if (Number(contentLength) > MAX_AUTH_BODY_BYTES) {
+      throw new AuthError("Request body is too large.", 413);
+    }
   }
 
   let body: unknown;
@@ -187,6 +198,62 @@ async function readPassword(request: BunRequest): Promise<string> {
   }
 
   return body.password;
+}
+
+async function readPasswordChange(request: BunRequest): Promise<{ currentPassword: string; newPassword: string }> {
+  const contentType = request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
+  if (contentType !== "application/json") {
+    throw new AuthError("Content-Type must be application/json.", 415);
+  }
+
+  const contentLength = request.headers.get("content-length");
+  if (contentLength !== null) {
+    if (!/^\d+$/.test(contentLength)) {
+      throw new AuthError("Content-Length is invalid.", 400);
+    }
+    if (Number(contentLength) > MAX_AUTH_BODY_BYTES) {
+      throw new AuthError("Request body is too large.", 413);
+    }
+  }
+
+  let body: unknown;
+  try {
+    body = JSON.parse(await readBodyText(request)) as unknown;
+  } catch (error) {
+    if (error instanceof AuthError) throw error;
+    throw new AuthError("Request body must be valid JSON.", 400);
+  }
+
+  if (
+    !isRecord(body) ||
+    Object.keys(body).length !== 2 ||
+    typeof body.currentPassword !== "string" ||
+    typeof body.newPassword !== "string"
+  ) {
+    throw new AuthError("Body must contain currentPassword and newPassword.", 400);
+  }
+
+  if (body.currentPassword.length > MAX_PASSWORD_LENGTH) {
+    throw new AuthError("Current password is invalid.", 400);
+  }
+
+  const normalizedNewPassword = body.newPassword.toLowerCase();
+  if (
+    body.newPassword.length < MIN_NEW_PASSWORD_LENGTH ||
+    body.newPassword.length > MAX_PASSWORD_LENGTH ||
+    /\s/u.test(body.newPassword) ||
+    /^(.)\1+$/u.test(normalizedNewPassword) ||
+    /^(.{1,8})\1+$/u.test(normalizedNewPassword) ||
+    "abcdefghijklmnopqrstuvwxyz".includes(normalizedNewPassword) ||
+    ["password123456", "123456789012", "qwertyuiop12", "letmeinplease"].includes(normalizedNewPassword)
+  ) {
+    throw new AuthError(
+      `New password must be ${MIN_NEW_PASSWORD_LENGTH}-${MAX_PASSWORD_LENGTH} characters and not trivial or contain whitespace.`,
+      400,
+    );
+  }
+
+  return { currentPassword: body.currentPassword, newPassword: body.newPassword };
 }
 
 async function readBodyText(request: BunRequest): Promise<string> {
@@ -223,12 +290,12 @@ async function readBodyText(request: BunRequest): Promise<string> {
   return new TextDecoder().decode(body);
 }
 
-function assertSameOrigin(request: BunRequest): void {
+function assertSameOrigin(request: BunRequest, requireOrigin = false): void {
   const origin = request.headers.get("origin");
   const fetchSite = request.headers.get("sec-fetch-site");
   const expectedOrigin = env.appOrigin ?? new URL(request.url).origin;
 
-  if (fetchSite === "cross-site" || (origin && origin !== expectedOrigin)) {
+  if (fetchSite === "cross-site" || (requireOrigin && !origin) || (origin && origin !== expectedOrigin)) {
     throw new AuthError("Invalid request origin.", 403);
   }
 }
@@ -319,8 +386,8 @@ async function buildSession(): Promise<SessionRecord> {
   };
 }
 
-async function saveSession(session: SessionRecord): Promise<void> {
-  await db.batch(
+async function saveSession(session: SessionRecord, passwordHash: string): Promise<void> {
+  const results = await db.batch(
     [
       {
         sql: "DELETE FROM auth_sessions WHERE expires_at <= ?",
@@ -329,18 +396,25 @@ async function saveSession(session: SessionRecord): Promise<void> {
       {
         sql: `
           INSERT INTO auth_sessions (token_hash, expires_at, created_at)
-          VALUES (?, ?, ?)
+          SELECT ?, ?, ?
+          WHERE EXISTS (
+            SELECT 1 FROM auth_credentials WHERE id = 1 AND password_hash = ?
+          )
         `,
-        args: [session.tokenHash, session.expiresAt, session.createdAt],
+        args: [session.tokenHash, session.expiresAt, session.createdAt, passwordHash],
       },
     ],
     "write",
   );
+
+  if (results[1]?.rowsAffected !== 1) {
+    throw new AuthError("Invalid password.", 401);
+  }
 }
 
-async function createSession(): Promise<string> {
+async function createSession(passwordHash: string): Promise<string> {
   const session = await buildSession();
-  await saveSession(session);
+  await saveSession(session, passwordHash);
   return session.token;
 }
 
@@ -363,28 +437,33 @@ async function getPasswordRecord(): Promise<PasswordRow | null> {
     : null;
 }
 
+function defaultPasswordHint(passwordRecord: PasswordRow | null): string | null {
+  if (
+    env.nodeEnv !== "development" ||
+    Bun.env.AUTH_SHOW_DEFAULT_PASSWORD_HINT === "false" ||
+    passwordRecord?.is_default !== 1
+  ) return null;
+  return env.authDefaultPassword;
+}
+
 async function getCurrentSession(request: BunRequest): Promise<{ isDefaultPassword: boolean } | null> {
   const token = request.cookies.get(SESSION_COOKIE_NAME);
   if (!token) return null;
 
+  // The session and password gate share one snapshot; revocation does not cancel checks already in flight.
   const result = await db.execute({
     sql: `
-      SELECT token_hash
-      FROM auth_sessions
-      WHERE token_hash = ? AND expires_at > ?
+      SELECT credentials.is_default
+      FROM auth_sessions AS sessions
+      JOIN auth_credentials AS credentials ON credentials.id = 1
+      WHERE sessions.token_hash = ? AND sessions.expires_at > ?
       LIMIT 1
     `,
     args: [await hashToken(token), Date.now()],
   });
 
-  if (result.rows.length === 0) return null;
-  const passwordRecord = await getPasswordRecord();
-  return { isDefaultPassword: passwordRecord?.is_default === 1 };
-}
-
-function defaultPasswordHint(passwordRecord: PasswordRow | null): string | null {
-  if (env.nodeEnv !== "development" || passwordRecord?.is_default !== 1) return null;
-  return env.authDefaultPassword;
+  const row = result.rows[0] as unknown as { is_default: number } | undefined;
+  return row ? { isDefaultPassword: Number(row.is_default) === 1 } : null;
 }
 
 function setSessionCookie(request: BunRequest, token: string): void {
@@ -442,7 +521,7 @@ export async function login(request: BunRequest): Promise<Response> {
     }
 
     clearFailedLogin(loginKey);
-    setSessionCookie(request, await createSession());
+    setSessionCookie(request, await createSession(passwordHash));
     return jsonResponse({
       success: true,
       authenticated: true,
@@ -460,6 +539,77 @@ export async function logout(request: BunRequest): Promise<Response> {
     await deleteSession(request.cookies.get(SESSION_COOKIE_NAME));
     clearSessionCookie(request);
     return jsonResponse({ ok: true });
+  } catch (error) {
+    return errorResponse(error);
+  }
+}
+
+export async function changePassword(request: BunRequest): Promise<Response> {
+  try {
+    assertSameOrigin(request, true);
+
+    const currentSession = await getCurrentSession(request);
+    if (!currentSession) {
+      throw new AuthError("Authentication is required.", 401);
+    }
+
+    const token = request.cookies.get(SESSION_COOKIE_NAME);
+    const passwordRecord = await getPasswordRecord();
+    if (!token || !passwordRecord) {
+      throw new AuthError("Authentication is required.", 401);
+    }
+
+    const { currentPassword, newPassword } = await readPasswordChange(request);
+    if (!(await Bun.password.verify(currentPassword, passwordRecord.password_hash))) {
+      throw new AuthError("Current password is incorrect.", 401);
+    }
+    if (await Bun.password.verify(newPassword, passwordRecord.password_hash)) {
+      throw new AuthError("New password must be different from the current password.", 400);
+    }
+
+    const updatedAt = Date.now();
+    const newPasswordHash = await Bun.password.hash(newPassword);
+    const sessionTokenHash = await hashToken(token);
+    const results = await db.batch(
+      [
+        {
+          sql: `
+            UPDATE auth_credentials
+            SET password_hash = ?, is_default = 0, updated_at = ?
+            WHERE id = 1 AND password_hash = ?
+              AND EXISTS (
+                SELECT 1 FROM auth_sessions
+                WHERE token_hash = ? AND expires_at > ?
+              )
+          `,
+          args: [
+            newPasswordHash,
+            updatedAt,
+            passwordRecord.password_hash,
+            sessionTokenHash,
+            updatedAt,
+          ],
+        },
+        {
+          sql: `
+            DELETE FROM auth_sessions
+            WHERE EXISTS (
+              SELECT 1 FROM auth_credentials
+              WHERE id = 1 AND password_hash = ? AND updated_at = ?
+            )
+          `,
+          args: [newPasswordHash, updatedAt],
+        },
+      ],
+      "write",
+    );
+
+    if (results[0]?.rowsAffected !== 1) {
+      throw new AuthError("Password or session changed. Please log in and try again.", 409);
+    }
+
+    clearSessionCookie(request);
+    return jsonResponse({ success: true, authenticated: false, requiresLogin: true });
   } catch (error) {
     return errorResponse(error);
   }

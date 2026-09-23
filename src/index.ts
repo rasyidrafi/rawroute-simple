@@ -1,6 +1,6 @@
 import { serve } from "bun";
 import index from "./index.html";
-import { ensureAuthSchema, ensureDefaultPassword, login, logout, status } from "./lib/auth";
+import { changePassword, ensureAuthSchema, ensureDefaultPassword, login, logout, status } from "./lib/auth";
 import {
   cliproxyInstall,
   cliproxyKey,
@@ -25,7 +25,11 @@ const server = serve({
   port: env.port,
   routes: {
     "/": index,
-    "/api/health": { GET: () => Response.json({ ok: true, service: "bun-react" }) },
+    "/api/health": { GET: () => Response.json({
+      ok: true,
+      service: "bun-react",
+      ...(Bun.env.RAWROUTE_PREVIEW_PROBE ? { previewProbe: Bun.env.RAWROUTE_PREVIEW_PROBE } : {}),
+    }) },
     "/api/db/health": {
       GET: async () => {
         try {
@@ -42,6 +46,7 @@ const server = serve({
     },
     "/api/auth/login": { POST: login },
     "/api/auth/logout": { POST: logout },
+    "/api/auth/password": { POST: changePassword },
     "/api/auth/status": { GET: status },
     "/api/cliproxy/status": { GET: cliproxyStatus },
     "/api/cliproxy/versions": { GET: cliproxyVersions },

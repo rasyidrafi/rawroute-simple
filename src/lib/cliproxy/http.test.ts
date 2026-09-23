@@ -30,13 +30,14 @@ test("management origin allows Origin-less GETs but requires exact Origin for mu
   expect(isManagementOriginAllowed(getWithoutOrigin, undefined, false)).toBe(false);
 });
 
-test("authenticated status GET accepts a missing Origin while mutations fail closed", async () => {
+test("default-password sessions are gated until rotation and mutations require Origin", async () => {
   await auth.ensureAuthSchema();
   await auth.ensureDefaultPassword();
   const server = Bun.serve({
     port: 0,
     routes: {
       "/api/auth/login": { POST: auth.login },
+      "/api/auth/password": { POST: auth.changePassword },
       "/api/cliproxy/status": { GET: cliproxyStatus },
       "/api/cliproxy/start": { POST: cliproxyStart },
     },
@@ -53,8 +54,40 @@ test("authenticated status GET accepts a missing Origin while mutations fail clo
     const cookie = login.headers.get("set-cookie")?.split(";", 1)[0];
     expect(cookie).toBeDefined();
 
-    const status = await fetch(`${origin}/api/cliproxy/status`, {
+    const restrictedStatus = await fetch(`${origin}/api/cliproxy/status`, {
       headers: { Cookie: cookie! },
+    });
+    const restrictedPayload = await restrictedStatus.json() as Record<string, unknown>;
+    expect(restrictedStatus.status).toBe(403);
+    expect(restrictedStatus.headers.get("cache-control")).toBe("no-store");
+    expect(restrictedPayload.error).toBe("Change password required");
+
+    const newPassword = "phase2a-test-new-password-strong";
+    const passwordChange = await fetch(`${origin}/api/auth/password`, {
+      method: "POST",
+      headers: {
+        Origin: origin,
+        Cookie: cookie!,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ currentPassword: "phase2a-http-test-password", newPassword }),
+    });
+    expect(passwordChange.status).toBe(200);
+    const clearedCookie = passwordChange.headers.get("set-cookie")?.toLowerCase();
+    expect(clearedCookie).toContain("rawroute_session=");
+    expect(clearedCookie).toContain("expires=");
+
+    const relogin = await fetch(`${origin}/api/auth/login`, {
+      method: "POST",
+      headers: { Origin: origin, "Content-Type": "application/json" },
+      body: JSON.stringify({ password: newPassword }),
+    });
+    expect(relogin.status).toBe(200);
+    const newCookie = relogin.headers.get("set-cookie")?.split(";", 1)[0];
+    expect(newCookie).toBeDefined();
+
+    const status = await fetch(`${origin}/api/cliproxy/status`, {
+      headers: { Cookie: newCookie! },
     });
     const payload = await status.json() as Record<string, unknown>;
     expect(status.status).toBe(200);
@@ -63,7 +96,7 @@ test("authenticated status GET accepts a missing Origin while mutations fail clo
 
     const mutation = await fetch(`${origin}/api/cliproxy/start`, {
       method: "POST",
-      headers: { Cookie: cookie! },
+      headers: { Cookie: newCookie! },
     });
     expect(mutation.status).toBe(403);
     expect(mutation.headers.get("cache-control")).toBe("no-store");

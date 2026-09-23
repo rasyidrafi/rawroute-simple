@@ -91,8 +91,12 @@ async function withManagement(
 ): Promise<Response> {
   try {
     assertManagementOrigin(request, requireOrigin);
-    if (!(await getCurrentSession(request))) {
+    const session = await getCurrentSession(request);
+    if (!session) {
       throw new HttpError("Authentication is required.", 401);
+    }
+    if (session.isDefaultPassword) {
+      throw new HttpError("Change password required", 403);
     }
     return await action();
   } catch (error) {

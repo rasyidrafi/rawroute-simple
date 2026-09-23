@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { LoginForm } from "@/components/login-form";
 import { DashboardShell } from "@/components/dashboard/dashboard-shell";
+import { Spinner } from "@/components/ui/spinner";
 import "./index.css";
 
 type AuthResponse = {
@@ -15,11 +16,10 @@ export function App() {
   const [serviceMessage, setServiceMessage] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isDefaultPassword, setIsDefaultPassword] = useState(false);
-  const [defaultPasswordHint, setDefaultPasswordHint] = useState<string | null>(
-    null,
-  );
+  const [defaultPasswordHint, setDefaultPasswordHint] = useState<string | null>(null);
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [isSessionLoading, setIsSessionLoading] = useState(true);
 
@@ -54,14 +54,16 @@ export function App() {
         return response.json() as Promise<AuthResponse>;
       })
       .then((data) => {
+        if (controller.signal.aborted) return;
         setIsAuthenticated(data.authenticated === true);
         setIsDefaultPassword(data.isDefaultPassword === true);
         setDefaultPasswordHint(data.defaultPasswordHint ?? null);
       })
       .catch((fetchError) => {
         if (
-          fetchError instanceof DOMException &&
-          fetchError.name === "AbortError"
+          controller.signal.aborted ||
+          (fetchError instanceof DOMException &&
+            fetchError.name === "AbortError")
         )
           return;
         setAuthError(
@@ -70,7 +72,9 @@ export function App() {
             : "Unable to load session",
         );
       })
-      .finally(() => setIsSessionLoading(false));
+      .finally(() => {
+        if (!controller.signal.aborted) setIsSessionLoading(false);
+      });
 
     return () => controller.abort();
   }, []);
@@ -78,6 +82,7 @@ export function App() {
   async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setAuthError(null);
+    setAuthNotice(null);
     setIsAuthLoading(true);
 
     try {
@@ -120,8 +125,8 @@ export function App() {
       if (!response.ok)
         throw new Error(`Request failed with ${response.status}`);
       setIsAuthenticated(false);
-      setIsDefaultPassword(false);
-      setDefaultPasswordHint(null);
+      // Signing out does not change the password: keep the first-login hint.
+      setAuthNotice(null);
     } catch (logoutError) {
       setAuthError(
         logoutError instanceof Error ? logoutError.message : "Logout failed",
@@ -131,8 +136,35 @@ export function App() {
     }
   }
 
+  function handlePasswordChanged() {
+    setIsAuthenticated(false);
+    setIsDefaultPassword(false);
+    setDefaultPasswordHint(null);
+    setAuthPassword("");
+    setAuthError(null);
+    setAuthNotice("Password changed. Sign in with your new password.");
+  }
+
+  if (isSessionLoading) {
+    return (
+      <main
+        aria-busy="true"
+        className="flex min-h-svh items-center justify-center bg-background"
+      >
+        <Spinner className="size-8" />
+      </main>
+    );
+  }
+
   if (isAuthenticated) {
-    return <DashboardShell onLogout={handleLogout} isDefaultPassword={isDefaultPassword} />;
+    return (
+      <DashboardShell
+        onLogout={handleLogout}
+        onPasswordChanged={handlePasswordChanged}
+        isDefaultPassword={isDefaultPassword}
+        logoutError={authError}
+      />
+    );
   }
 
   return (
@@ -141,20 +173,20 @@ export function App() {
       <div className="pointer-events-none absolute -left-32 top-12 size-96 rounded-full bg-amber-300/30 blur-3xl" />
       <section className="relative w-full max-w-sm" aria-label="Password authentication">
         <p className="sr-only" role="status" aria-live="polite">{serviceMessage}</p>
-        {isSessionLoading ? (
-          <div className="rounded-xl border bg-card p-8 text-center text-sm text-muted-foreground shadow-xl">
-            Loading session...
-          </div>
-        ) : (
-          <LoginForm
-            password={authPassword}
-            error={authError}
-            isLoading={isAuthLoading}
-            defaultPasswordHint={defaultPasswordHint}
-            onPasswordChange={(event) => setAuthPassword(event.target.value)}
-            onSubmit={handleAuthSubmit}
-          />
+        {authNotice && (
+          <p role="status" className="mb-4 text-center text-sm text-emerald-800 dark:text-emerald-300">
+            {authNotice}
+          </p>
         )}
+        <LoginForm
+          password={authPassword}
+          error={authError}
+          isLoading={isAuthLoading}
+          isDefaultPassword={isDefaultPassword}
+          defaultPasswordHint={defaultPasswordHint}
+          onPasswordChange={(event) => setAuthPassword(event.target.value)}
+          onSubmit={handleAuthSubmit}
+        />
       </section>
     </main>
   );

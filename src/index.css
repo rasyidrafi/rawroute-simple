@@ -147,7 +147,7 @@
   pointer-events: none;
 }
 
-.unlimited-progress {
+.unlimited-progress [data-slot="progress-track"] {
   background: #fef3c7;
 }
 
@@ -163,7 +163,7 @@
   color: #fef3c7;
 }
 
-.dark .unlimited-progress {
+.dark .unlimited-progress [data-slot="progress-track"] {
   background: #422006;
 }
 

@@ -16,12 +16,13 @@ import {
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
+import { PasswordInput } from "@/components/password-input"
 
 export function LoginForm({
   password,
   error,
   isLoading,
+  isDefaultPassword,
   defaultPasswordHint,
   onPasswordChange,
   onSubmit,
@@ -31,32 +32,34 @@ export function LoginForm({
   password: string
   error?: string | null
   isLoading?: boolean
+  isDefaultPassword?: boolean
   defaultPasswordHint?: string | null
   onPasswordChange: React.ChangeEventHandler<HTMLInputElement>
   onSubmit: React.FormEventHandler<HTMLFormElement>
 }) {
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
-      <Card className="border-border/70 shadow-2xl shadow-slate-950/10">
-        <CardHeader className="space-y-5">
-          <div className="flex size-11 items-center justify-center rounded-xl bg-slate-950 text-white dark:bg-slate-100 dark:text-slate-950">
-            <RouteIcon className="size-5" />
-          </div>
-          <div>
-            <CardTitle className="text-2xl">RawRoute</CardTitle>
-            <CardDescription className="mt-2">
-              A protocol-preserving gateway for your model providers.
-            </CardDescription>
+      <Card variant="elevated">
+        <CardHeader>
+          <div className="flex flex-col gap-5">
+            <div className="flex size-11 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+              <RouteIcon className="size-5" />
+            </div>
+            <div>
+              <CardTitle variant="display">RawRoute</CardTitle>
+              <CardDescription className="mt-2">
+                A protocol-preserving gateway for your model providers.
+              </CardDescription>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
           <form onSubmit={onSubmit}>
             <FieldGroup>
               <Field>
-                  <FieldLabel htmlFor="auth-password">Password</FieldLabel>
-                <Input
+                <FieldLabel htmlFor="auth-password">Password</FieldLabel>
+                <PasswordInput
                   id="auth-password"
-                  type="password"
                   value={password}
                   onChange={onPasswordChange}
                   autoComplete="current-password"
@@ -72,9 +75,13 @@ export function LoginForm({
                   {isLoading ? "Signing in..." : "Sign in"}
                 </Button>
                 {error && <FieldError>{error}</FieldError>}
-                {defaultPasswordHint && (
+                {isDefaultPassword && (
                   <p className="text-center text-xs text-amber-600 dark:text-amber-400">
-                    Default password: <code className="rounded bg-muted px-1">{defaultPasswordHint}</code>
+                    {defaultPasswordHint ? (
+                      <>Initial password: <code className="rounded bg-muted px-1">{defaultPasswordHint}</code></>
+                    ) : (
+                      <>Use the initial password from <code className="rounded bg-muted px-1">AUTH_DEFAULT_PASSWORD</code> in your deployment settings.</>
+                    )}
                   </p>
                 )}
               </Field>

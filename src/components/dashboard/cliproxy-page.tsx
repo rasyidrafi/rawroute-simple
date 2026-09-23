@@ -3,8 +3,10 @@
 import { useEffect, useState } from "react";
 import {
   AlertCircleIcon,
+  CheckIcon,
   CheckCircle2Icon,
   CircleHelpIcon,
+  CopyIcon,
   DownloadIcon,
   LoaderCircleIcon,
   PlayIcon,
@@ -185,6 +187,10 @@ function statusBadgeClass(label: string): string {
   return "";
 }
 
+function isAuthenticationError(message: string): boolean {
+  return /authentication is required/i.test(message);
+}
+
 export function CliproxyPage() {
   const [status, setStatus] = useState<StatusDetails | null>(null);
   const [versions, setVersions] = useState<CliproxyVersions | null>(null);
@@ -318,10 +324,10 @@ export function CliproxyPage() {
   }
 
   return (
-    <main className="flex-1 bg-[#f6f5f1] p-4 dark:bg-background md:p-6 lg:p-8">
-      <div className="mx-auto flex max-w-7xl flex-col gap-6">
+    <main className="min-w-0 flex-1 bg-[#f6f5f1] p-4 dark:bg-background md:p-6 lg:p-8">
+      <div className="mx-auto flex w-full min-w-0 max-w-7xl flex-col gap-6">
         <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-          <div>
+          <div className="min-w-0">
             <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
               <TerminalIcon className="size-3.5" /> System service
             </div>
@@ -342,17 +348,21 @@ export function CliproxyPage() {
         </div>
 
         {statusError && (
-          <div role="alert" className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
+          <div role="alert" className="flex min-w-0 flex-col items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm sm:flex-row">
             <AlertCircleIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
             <div className="min-w-0 flex-1">
               <p className="font-medium">Could not load CLIProxy status</p>
-              <p className="mt-1 break-words text-muted-foreground">{statusError}</p>
+              <p className="mt-1 break-words text-muted-foreground">
+                {isAuthenticationError(statusError)
+                  ? "Your dashboard session may have expired. Refresh this page to sign in again."
+                  : statusError}
+              </p>
             </div>
-            <Button size="sm" variant="outline" disabled={statusRefreshing || Boolean(busy)} onClick={() => void refreshStatus()}>Retry</Button>
+            <Button className="sm:shrink-0" size="sm" variant="outline" disabled={statusRefreshing || Boolean(busy)} onClick={() => void refreshStatus()}>Retry</Button>
           </div>
         )}
         {actionError && (
-          <div role="alert" className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
+          <div role="alert" className="flex min-w-0 items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
             <AlertCircleIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
             <div className="min-w-0 flex-1">
               <p className="font-medium">The requested action failed</p>
@@ -364,55 +374,60 @@ export function CliproxyPage() {
 
         <Card className="overflow-hidden">
           <div className="h-1 bg-gradient-to-r from-slate-900 via-slate-500 to-emerald-600 dark:from-slate-100 dark:via-slate-500 dark:to-emerald-400" />
-          <CardHeader className="gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex items-start gap-3">
-              <div className="flex size-11 shrink-0 items-center justify-center rounded-xl border bg-muted/60">
-                <ServerIcon className="size-5" />
+          <CardHeader>
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex items-start gap-3">
+                <div className="flex size-11 shrink-0 items-center justify-center rounded-xl border bg-muted/60">
+                  <ServerIcon className="size-5" />
+                </div>
+                <div>
+                  <CardTitle>
+                    <span className="flex flex-wrap items-center gap-2">
+                      Managed process
+                      <Badge variant={label === "Error" || label === "Conflict" ? "destructive" : "outline"} className={statusBadgeClass(label)}>
+                        {busy ? <LoaderCircleIcon className="animate-spin" /> : label === "Running" ? <CheckCircle2Icon /> : null}
+                        {busy ? actionLabel(busy) : label}
+                      </Badge>
+                    </span>
+                  </CardTitle>
+                  <CardDescription className="mt-1">
+                    {status?.operation
+                      ? `${operationLabel(status.operation.name)} since ${new Date(status.operation.startedAt).toLocaleTimeString()}`
+                      : status?.healthy
+                        ? "Health check passed; the proxy is accepting authenticated requests."
+                        : status?.processRunning
+                          ? "The process exists but did not pass its health check."
+                          : status?.installed
+                            ? "Installed and ready to start."
+                            : "No managed CLIProxyAPI release is installed."}
+                  </CardDescription>
+                </div>
               </div>
-              <div>
-                <CardTitle className="flex flex-wrap items-center gap-2">
-                  Managed process
-                  <Badge variant={label === "Error" || label === "Conflict" ? "destructive" : "outline"} className={statusBadgeClass(label)}>
-                    {busy ? <LoaderCircleIcon className="animate-spin" /> : label === "Running" ? <CheckCircle2Icon /> : null}
-                    {busy ? actionLabel(busy) : label}
-                  </Badge>
-                </CardTitle>
-                <CardDescription className="mt-1">
-                  {status?.operation
-                    ? `${operationLabel(status.operation.name)} since ${new Date(status.operation.startedAt).toLocaleTimeString()}`
-                    : status?.healthy
-                      ? "Health check passed; the proxy is accepting authenticated requests."
-                      : status?.processRunning
-                        ? "The process exists but did not pass its health check."
-                        : status?.installed
-                        ? "Installed and ready to start."
-                        : "No managed CLIProxyAPI release is installed."}
-                </CardDescription>
+              <div className="flex flex-wrap gap-2 sm:justify-end">
+                {status?.installed && !status.processRunning ? (
+                  <Button disabled={blocked || !status.installed} onClick={() => void runAction({ type: "start" })}>
+                    <PlayIcon /> Start
+                  </Button>
+                ) : null}
+                {status?.processRunning ? (
+                  <>
+                    <Button variant="outline" disabled={blocked} onClick={() => void runAction({ type: "restart" })}>
+                      <RotateCwIcon /> Restart
+                    </Button>
+                    <Button variant="destructive" disabled={blocked} onClick={() => setPendingAction({ type: "stop" })}>
+                      <SquareIcon /> Stop
+                    </Button>
+                  </>
+                ) : null}
               </div>
-            </div>
-            <div className="flex flex-wrap gap-2 sm:justify-end">
-              {status?.installed && !status.processRunning ? (
-                <Button disabled={blocked || !status.installed} onClick={() => void runAction({ type: "start" })}>
-                  <PlayIcon /> Start
-                </Button>
-              ) : null}
-              {status?.processRunning ? (
-                <>
-                  <Button variant="outline" disabled={blocked} onClick={() => void runAction({ type: "restart" })}>
-                    <RotateCwIcon /> Restart
-                  </Button>
-                  <Button variant="destructive" disabled={blocked} onClick={() => setPendingAction({ type: "stop" })}>
-                    <SquareIcon /> Stop
-                  </Button>
-                </>
-              ) : null}
             </div>
           </CardHeader>
-          <CardContent className="space-y-5">
+          <CardContent className="min-w-0">
+            <div className="flex min-w-0 flex-col gap-5">
             {status?.lastError && (
               <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm" role="alert">
                 <AlertCircleIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
-                <div>
+                <div className="min-w-0">
                   <p className="font-medium">Service reported an error</p>
                   <p className="mt-1 break-words text-muted-foreground">{status.lastError}</p>
                 </div>
@@ -421,7 +436,7 @@ export function CliproxyPage() {
             {status?.conflict && (
               <div className="flex items-start gap-2 rounded-lg border border-amber-600/30 bg-amber-500/10 p-3 text-sm text-amber-950 dark:text-amber-100" role="alert">
                 <CircleHelpIcon className="mt-0.5 size-4 shrink-0" />
-                <p>Port {port} is occupied by a process that CLIProxyAPI does not own. Lifecycle actions are disabled to avoid signaling an unrelated process.</p>
+                <p className="min-w-0 break-words">Port {port} is occupied by a process that CLIProxyAPI does not own. Lifecycle actions are disabled to avoid signaling an unrelated process.</p>
               </div>
             )}
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -431,17 +446,23 @@ export function CliproxyPage() {
               <Detail label="Process ID" value={status?.pid ? `${status.pid}` : "Not exposed by status API"} mono />
             </div>
 
-            <div className="flex flex-col gap-3 rounded-lg border bg-muted/20 p-3 sm:flex-row sm:items-center">
-              <div className="flex min-w-0 flex-1 items-center gap-3">
+            <div className="min-w-0 flex flex-col gap-3 rounded-lg border bg-muted/20 p-3">
+              <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">Release management</p>
-                  <p className={`text-xs ${versionsError ? "text-destructive" : "text-muted-foreground"}`}>
+                  <p className={`break-words text-xs ${versionsError ? "text-destructive" : "text-muted-foreground"}`}>
                     {versions?.latest
                       ? `Latest available: ${versions.latest}`
                       : versionsError ?? "Checking release catalog..."}
                   </p>
+                  {versionsError && isAuthenticationError(versionsError) && (
+                    <p className="mt-1 break-words text-xs text-muted-foreground">
+                      Your dashboard session may have expired. Refresh this page to sign in again.
+                    </p>
+                  )}
                 </div>
                 <Button
+                  className="sm:shrink-0"
                   size="sm"
                   variant="outline"
                   disabled={blocked || versionsRefreshing}
@@ -451,21 +472,22 @@ export function CliproxyPage() {
                   {versionsRefreshing ? "Checking" : "Refresh releases"}
                 </Button>
               </div>
-              <div className="flex flex-col gap-2 sm:flex-row">
+              <div className="grid min-w-0 gap-2 lg:grid-cols-2">
                 <Button
+                  className="w-full"
                   disabled={releaseBlocked || latestIsCurrent}
                   onClick={() => versions && confirmInstall("latest")}
                 >
                   <DownloadIcon />
                   {status?.installed ? "Update to latest" : "Install latest"}
                 </Button>
-                <div className="flex gap-2">
+                <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
                   <Select
                     value={selectedRelease?.version ?? ""}
                     onValueChange={(value) => value && setSelectedVersion(value)}
                     disabled={releaseBlocked || !versions?.versions.length}
                   >
-                    <SelectTrigger aria-label="Choose an exact CLIProxyAPI release" className="min-w-40">
+                    <SelectTrigger aria-label="Choose an exact CLIProxyAPI release" className="w-full min-w-0">
                       <SelectValue placeholder="Pick exact release" />
                     </SelectTrigger>
                     <SelectContent>
@@ -477,6 +499,7 @@ export function CliproxyPage() {
                     </SelectContent>
                   </Select>
                   <Button
+                    className="w-full sm:w-auto"
                     variant="outline"
                     disabled={
                       releaseBlocked ||
@@ -493,6 +516,7 @@ export function CliproxyPage() {
                 </div>
               </div>
             </div>
+            </div>
           </CardContent>
         </Card>
 
@@ -503,10 +527,12 @@ export function CliproxyPage() {
               CLIProxyAPI binds to loopback only. Use the dashboard's same-origin API URL in clients; requests are forwarded by the application.
             </CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-3 sm:grid-cols-3">
-            <Detail label="Client base URL" value={`${typeof window === "undefined" ? "" : window.location.origin}/v1`} mono />
-            <Detail label="Upstream listener" value={`127.0.0.1:${port}`} mono />
-            <Detail label="Health" value={status?.healthy ? "Healthy" : status?.processRunning ? "Not healthy" : "Not running"} />
+          <CardContent className="min-w-0">
+            <div className="grid min-w-0 gap-3 lg:grid-cols-3">
+              <Detail label="Client base URL" value={`${typeof window === "undefined" ? "" : window.location.origin}/v1`} mono wrap copyable />
+              <Detail label="Upstream listener" value={`127.0.0.1:${port}`} mono />
+              <Detail label="Health" value={status?.healthy ? "Healthy" : status?.processRunning ? "Not healthy" : "Not running"} />
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -537,11 +563,48 @@ export function CliproxyPage() {
   );
 }
 
-function Detail({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+function Detail({
+  label,
+  value,
+  mono = false,
+  wrap = false,
+  copyable = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  wrap?: boolean;
+  copyable?: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  async function copyValue() {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2_000);
+    } catch {
+      setCopied(false);
+    }
+  }
+
   return (
     <div className="min-w-0 rounded-lg border bg-background/70 px-3 py-2.5">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={`mt-1 truncate text-sm font-medium ${mono ? "font-mono" : ""}`} title={value}>{value}</p>
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <p className="min-w-0 text-xs text-muted-foreground">{label}</p>
+        {copyable && (
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label={copied ? `${label} copied` : `Copy ${label}`}
+            title={copied ? "Copied" : `Copy ${label}`}
+            onClick={() => void copyValue()}
+          >
+            {copied ? <CheckIcon /> : <CopyIcon />}
+          </Button>
+        )}
+      </div>
+      <p className={`mt-1 text-sm font-medium ${wrap ? "break-all" : "truncate"} ${mono ? "font-mono" : ""}`} title={value}>{value}</p>
     </div>
   );
 }
