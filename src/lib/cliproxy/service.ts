@@ -1,19 +1,53 @@
-import { randomBytes, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { homedir } from "node:os";
 import * as lockfile from "proper-lockfile";
 import {
-  extractVerifiedBinary,
-  fetchVerifiedBinary,
   getAvailableVersions,
   normalizeVersion,
   type AvailableVersions,
 } from "./release";
+import {
+  CLIPROXY_HOST,
+  CLIPROXY_PORT,
+  defaultState,
+  ensureConfig,
+  ensureLayout,
+  getDataRoot,
+  getServicePaths,
+  readJson,
+  readSecret,
+  readState,
+  writeAtomic,
+  writeState,
+} from "./store";
+import {
+  listenerPortIsBusy as inspectListenerPortIsBusy,
+  listenersLoopbackOnly as inspectListenersLoopbackOnly,
+  listenersOwnedBy as inspectListenersOwnedBy,
+  listenersSecurelyOwnedBy as inspectListenersSecurelyOwnedBy,
+  processIdentityMatches,
+  readPortListeners,
+  readProcIdentity,
+} from "./process-ownership";
+import {
+  CLIPROXY_EXECUTABLE_NAME,
+  cleanupStagingVersions,
+  currentVersion,
+  isInstalledVersion,
+  prepareVersion,
+  removeCurrentVersion,
+  setCurrentVersion,
+} from "./version-store";
 
-export const CLIPROXY_HOST = "127.0.0.1";
-export const CLIPROXY_PORT = 8317;
-const EXECUTABLE_NAME = "cli-proxy-api";
+export {
+  CLIPROXY_HOST,
+  CLIPROXY_PORT,
+  getDataRoot,
+  renderConfig,
+  validateLoopbackConfig,
+} from "./store";
+export { areAllLoopbackListeners, parseListeningSockets, parseProcStartTime } from "./process-ownership";
+
 const TERM_TIMEOUT_MS = 5_000;
 const STARTUP_TIMEOUT_MS = 30_000;
 const MAX_RESTARTS = 5;
@@ -25,13 +59,6 @@ export const CLIPROXY_LOCK_TIMING = {
   recoveryMarginMs: 30_000,
   retryAttempts: 300,
 } as const;
-
-interface PersistentState {
-  schemaVersion: 1;
-  desiredRunning: boolean;
-  installedVersion: string | null;
-  pinnedVersion: string | null;
-}
 
 interface ProcessRecord {
   pid: number;
@@ -55,21 +82,6 @@ interface UpdateTransaction {
   toVersion: string;
   previousPin: string | null;
   previousDesiredRunning?: boolean;
-}
-
-interface ServicePaths {
-  root: string;
-  versions: string;
-  current: string;
-  config: string;
-  auth: string;
-  apiKey: string;
-  managementKey: string;
-  state: string;
-  process: string;
-  manager: string;
-  transaction: string;
-  lock: string;
 }
 
 export type CliproxyOperationName =
@@ -104,11 +116,6 @@ export interface CliproxyVersions extends AvailableVersions {
 
 export type CliproxyStartupAction = "idle" | "start" | "missing-install";
 
-interface PortListeners {
-  ownersByInode: Map<string, Set<number>>;
-  addressesByInode: Map<string, Set<string>>;
-}
-
 type ChildProcess = Bun.Subprocess;
 
 const dataRoot = getDataRoot();
@@ -121,12 +128,11 @@ let shuttingDown = false;
 let restartAttempts = 0;
 let restartGeneration = 0;
 let restartTask: Promise<void> | undefined;
+let pendingRestartBackoff:
+  | { timer: ReturnType<typeof setTimeout>; resolve: () => void }
+  | undefined;
 let pendingRestart: { record: ProcessRecord; exitCode: number; generation: number } | undefined;
 const intentionalExits = new Set<number>();
-
-export function getDataRoot(rawRouteDataDir = process.env.RAWROUTE_DATA_DIR): string {
-  return path.resolve(rawRouteDataDir || path.join(homedir(), ".local/share/rawroute"));
-}
 
 export function getStartupAction(
   desiredRunning: boolean,
@@ -143,273 +149,6 @@ export function shouldStartAfterInstall(
   return desiredRunning || !previouslyInstalled;
 }
 
-function getServicePaths(root: string): ServicePaths {
-  const serviceRoot = path.join(root, "cliproxy");
-  return {
-    root: serviceRoot,
-    versions: path.join(serviceRoot, "versions"),
-    current: path.join(serviceRoot, "current"),
-    config: path.join(serviceRoot, "config.yaml"),
-    auth: path.join(serviceRoot, "auth"),
-    apiKey: path.join(serviceRoot, "secrets", "api-key"),
-    managementKey: path.join(serviceRoot, "secrets", "management-key"),
-    state: path.join(serviceRoot, "state.json"),
-    process: path.join(serviceRoot, "child.json"),
-    manager: path.join(serviceRoot, "manager.json"),
-    transaction: path.join(serviceRoot, "update-transaction.json"),
-    lock: path.join(serviceRoot, "lifecycle-lock"),
-  };
-}
-
-export function renderConfig(apiKey: string, managementKey: string, authDir: string): string {
-  const quote = (value: string) => JSON.stringify(value);
-  return [
-    `host: ${quote(CLIPROXY_HOST)}`,
-    `port: ${CLIPROXY_PORT}`,
-    "debug: false",
-    "remote-management:",
-    "  allow-remote: false",
-    `  secret-key: ${quote(managementKey)}`,
-    "  disable-control-panel: true",
-    "api-keys:",
-    `  - ${quote(apiKey)}`,
-    `auth-dir: ${quote(authDir)}`,
-    "",
-  ].join("\n");
-}
-
-export function parseProcStartTime(statContents: string): string | null {
-  const closingParen = statContents.lastIndexOf(")");
-  if (closingParen < 0) return null;
-  const fieldsAfterCommand = statContents.slice(closingParen + 1).trim().split(/\s+/);
-  return fieldsAfterCommand[19] || null;
-}
-
-export function parseListeningSockets(
-  contents: string,
-  port: number,
-  family: "ipv4" | "ipv6"
-): Array<{ inode: string; address: string }> {
-  const listeners: Array<{ inode: string; address: string }> = [];
-  const portHex = port.toString(16).toUpperCase().padStart(4, "0");
-  for (const line of contents.split("\n").slice(1)) {
-    const fields = line.trim().split(/\s+/);
-    if (fields.length < 10 || fields[3] !== "0A") continue;
-    const separator = fields[1].lastIndexOf(":");
-    const addressHex = fields[1].slice(0, separator).toUpperCase();
-    const localPort = fields[1].slice(separator + 1).toUpperCase();
-    if (localPort !== portHex || !/^\d+$/.test(fields[9])) continue;
-    const address = family === "ipv4" ? decodeProcIpv4Address(addressHex) : `ipv6:${addressHex}`;
-    listeners.push({ inode: fields[9], address });
-  }
-  return listeners;
-}
-
-export function areAllLoopbackListeners(addresses: Iterable<string>): boolean {
-  const listenerAddresses = [...addresses];
-  return listenerAddresses.length > 0 && listenerAddresses.every((address) => address === CLIPROXY_HOST);
-}
-
-export function validateLoopbackConfig(contents: string): void {
-  const rootHostLines = contents.split(/\r?\n/).filter(isRootHostSetting);
-  if (rootHostLines.length !== 1) {
-    throw new Error("CLIProxy config must contain exactly one root host setting");
-  }
-  const scalar = rootHostLines[0].slice(rootHostLines[0].indexOf(":") + 1);
-  const match = scalar.match(
-    /^\s*(?:"([^"\\]*)"|'([^']*)'|([^#\s]+))\s*(?:#.*)?$/
-  );
-  const configuredHost = match?.[1] ?? match?.[2] ?? match?.[3];
-  if (configuredHost !== CLIPROXY_HOST) {
-    throw new Error(`CLIProxy config host must be ${CLIPROXY_HOST}`);
-  }
-}
-
-function isRootHostSetting(line: string): boolean {
-  if (/^---(?:\s|$)/.test(line) || /^\s*(?:#|$)/.test(line)) return false;
-  if (/^[?!*&]/.test(line)) {
-    throw new Error("CLIProxy config uses unsupported root mapping key syntax");
-  }
-  if (/^host\s*:/.test(line)) return true;
-  const doubleQuoted = line.match(/^"((?:[^"\\]|\\.)*)"\s*:/);
-  if (doubleQuoted) {
-    if (doubleQuoted[1].includes("\\")) {
-      throw new Error("CLIProxy config uses an escaped root mapping key");
-    }
-    return doubleQuoted[1] === "host";
-  }
-  const singleQuoted = line.match(/^'((?:[^']|'')*)'\s*:/);
-  return singleQuoted?.[1].replace(/''/g, "'") === "host";
-}
-
-function decodeProcIpv4Address(addressHex: string): string {
-  if (!/^[a-f\d]{8}$/i.test(addressHex)) return `invalid:${addressHex}`;
-  const bytes = addressHex.match(/../g);
-  return bytes ? bytes.reverse().map((byte) => Number.parseInt(byte, 16)).join(".") : "invalid";
-}
-
-function ensureLayout(): void {
-  for (const directory of [paths.root, paths.versions, path.dirname(paths.apiKey), paths.auth]) {
-    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-    const metadata = fs.lstatSync(directory);
-    if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
-      throw new Error(`CLIProxy state directory is not a private directory: ${path.basename(directory)}`);
-    }
-    fs.chmodSync(directory, 0o700);
-  }
-}
-
-function writeAtomic(filePath: string, contents: string, mode = 0o600): void {
-  if (fs.existsSync(filePath) || isSymlink(filePath)) {
-    const metadata = fs.lstatSync(filePath);
-    if (!metadata.isFile() || metadata.isSymbolicLink()) {
-      throw new Error(`Refusing to replace a non-regular CLIProxy state file: ${path.basename(filePath)}`);
-    }
-  }
-  const temporary = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-  fs.writeFileSync(temporary, contents, { encoding: "utf8", mode });
-  fs.chmodSync(temporary, mode);
-  fs.renameSync(temporary, filePath);
-}
-
-function readJson<T>(filePath: string): T | null {
-  if (!fs.existsSync(filePath)) return null;
-  try {
-    const metadata = fs.lstatSync(filePath);
-    if (!metadata.isFile() || metadata.isSymbolicLink()) {
-      throw new Error("not a regular file");
-    }
-    return JSON.parse(fs.readFileSync(filePath, "utf8")) as T;
-  } catch {
-    throw new Error(`CLIProxy state file is invalid: ${path.basename(filePath)}`);
-  }
-}
-
-function defaultState(): PersistentState {
-  return {
-    schemaVersion: 1,
-    desiredRunning: false,
-    installedVersion: null,
-    pinnedVersion: null,
-  };
-}
-
-function readState(): PersistentState {
-  const state = readJson<PersistentState>(paths.state);
-  if (!state) return defaultState();
-  if (
-    state.schemaVersion !== 1 ||
-    typeof state.desiredRunning !== "boolean" ||
-    !(state.installedVersion === null || typeof state.installedVersion === "string") ||
-    !(state.pinnedVersion === null || typeof state.pinnedVersion === "string")
-  ) {
-    throw new Error("CLIProxy state file has an unsupported format");
-  }
-  if (state.installedVersion) state.installedVersion = normalizeVersion(state.installedVersion);
-  if (state.pinnedVersion) state.pinnedVersion = normalizeVersion(state.pinnedVersion);
-  return state;
-}
-
-function writeState(state: PersistentState): void {
-  writeAtomic(paths.state, `${JSON.stringify(state, null, 2)}\n`);
-}
-
-function createSecret(filePath: string): string {
-  if (fs.existsSync(filePath)) {
-    const metadata = fs.lstatSync(filePath);
-    if (!metadata.isFile() || metadata.isSymbolicLink()) {
-      throw new Error("CLIProxy secret path is not a regular file");
-    }
-    fs.chmodSync(filePath, 0o600);
-    const secret = fs.readFileSync(filePath, "utf8").trim();
-    if (secret.length < 32) throw new Error("CLIProxy persisted secret is invalid");
-    return secret;
-  }
-  const secret = randomBytes(32).toString("base64url");
-  writeAtomic(filePath, `${secret}\n`);
-  return secret;
-}
-
-function ensureConfig(): void {
-  const configExists = fs.existsSync(paths.config);
-  if (configExists) {
-    const metadata = fs.lstatSync(paths.config);
-    if (!metadata.isFile() || metadata.isSymbolicLink()) {
-      throw new Error("CLIProxy config path is not a regular file");
-    }
-  }
-  const apiKeyExists = fs.existsSync(paths.apiKey);
-  const managementKeyExists = fs.existsSync(paths.managementKey);
-  if (configExists && (!apiKeyExists || !managementKeyExists)) {
-    throw new Error("CLIProxy config exists but its persisted secrets are missing");
-  }
-  const apiKey = createSecret(paths.apiKey);
-  const managementKey = createSecret(paths.managementKey);
-  if (!configExists) {
-    writeAtomic(paths.config, renderConfig(apiKey, managementKey, paths.auth));
-  } else {
-    fs.chmodSync(paths.config, 0o600);
-  }
-  validateLoopbackConfig(fs.readFileSync(paths.config, "utf8"));
-}
-
-function currentVersion(): string | null {
-  if (!fs.existsSync(paths.current) && !isSymlink(paths.current)) return null;
-  const target = fs.readlinkSync(paths.current);
-  const match = target.match(/^versions\/(.+)$/);
-  if (!match) throw new Error("CLIProxy current link points outside its version directory");
-  const version = normalizeVersion(match[1]);
-  return isInstalledVersion(version) ? version : null;
-}
-
-function isSymlink(filePath: string): boolean {
-  try {
-    return fs.lstatSync(filePath).isSymbolicLink();
-  } catch {
-    return false;
-  }
-}
-
-function isInstalledVersion(version: string): boolean {
-  try {
-    const versionDir = path.join(paths.versions, version);
-    const directory = fs.lstatSync(versionDir);
-    const executable = fs.lstatSync(path.join(versionDir, EXECUTABLE_NAME));
-    return directory.isDirectory() && !directory.isSymbolicLink() && executable.isFile();
-  } catch {
-    return false;
-  }
-}
-
-function setCurrentVersion(version: string): void {
-  const normalized = normalizeVersion(version);
-  if (!isInstalledVersion(normalized)) throw new Error("CLIProxy version is not installed");
-  if (fs.existsSync(paths.current) && !isSymlink(paths.current)) {
-    throw new Error("CLIProxy current path exists and is not an owned symlink");
-  }
-  const temporary = path.join(paths.root, `current.${randomUUID()}`);
-  fs.symlinkSync(path.join("versions", normalized), temporary);
-  fs.renameSync(temporary, paths.current);
-}
-
-function removeCurrentVersion(expectedVersion: string): void {
-  if (!isSymlink(paths.current)) return;
-  if (fs.readlinkSync(paths.current) === path.join("versions", expectedVersion)) {
-    fs.unlinkSync(paths.current);
-  }
-}
-
-function readProcIdentity(pid: number): { startTime: string; executablePath: string } | null {
-  try {
-    const startTime = parseProcStartTime(fs.readFileSync(`/proc/${pid}/stat`, "utf8"));
-    const executablePath = fs.readlinkSync(`/proc/${pid}/exe`);
-    if (!startTime || executablePath.endsWith(" (deleted)")) return null;
-    return { startTime, executablePath: path.resolve(executablePath) };
-  } catch {
-    return null;
-  }
-}
-
 function getSelfIdentity(): ManagerRecord {
   const identity = readProcIdentity(process.pid);
   if (!identity) throw new Error("Unable to fingerprint the Bun process through /proc");
@@ -417,12 +156,7 @@ function getSelfIdentity(): ManagerRecord {
 }
 
 function recordIdentityMatches(record: Pick<ProcessRecord, "pid" | "startTime" | "executablePath">): boolean {
-  const actual = readProcIdentity(record.pid);
-  return Boolean(
-    actual &&
-      actual.startTime === record.startTime &&
-      actual.executablePath === path.resolve(record.executablePath)
-  );
+  return processIdentityMatches(record.pid, record.startTime, record.executablePath);
 }
 
 function managerIsAlive(record: ManagerRecord): boolean {
@@ -432,7 +166,7 @@ function managerIsAlive(record: ManagerRecord): boolean {
 function isManagedBinaryPath(executablePath: string): boolean {
   const relative = path.relative(paths.versions, executablePath);
   const parts = relative.split(path.sep);
-  if (parts.length !== 2 || parts[1] !== EXECUTABLE_NAME) return false;
+  if (parts.length !== 2 || parts[1] !== CLIPROXY_EXECUTABLE_NAME) return false;
   try {
     return normalizeVersion(parts[0]) === parts[0];
   } catch {
@@ -440,85 +174,25 @@ function isManagedBinaryPath(executablePath: string): boolean {
   }
 }
 
-function readPortListeners(port = CLIPROXY_PORT): PortListeners {
-  const addressesByInode = new Map<string, Set<string>>();
-  for (const [table, family] of [
-    ["/proc/net/tcp", "ipv4"],
-    ["/proc/net/tcp6", "ipv6"],
-  ] as const) {
-    try {
-      const contents = fs.readFileSync(table, "utf8");
-      for (const listener of parseListeningSockets(contents, port, family)) {
-        const addresses = addressesByInode.get(listener.inode) ?? new Set<string>();
-        addresses.add(listener.address);
-        addressesByInode.set(listener.inode, addresses);
-      }
-    } catch {
-      continue;
-    }
-  }
-
-  const ownersByInode = new Map<string, Set<number>>(
-    [...addressesByInode.keys()].map((inode) => [inode, new Set<number>()])
-  );
-  if (addressesByInode.size === 0) return { ownersByInode, addressesByInode };
-
-  let processEntries: fs.Dirent[];
-  try {
-    processEntries = fs.readdirSync("/proc", { withFileTypes: true });
-  } catch {
-    return { ownersByInode, addressesByInode };
-  }
-  for (const entry of processEntries) {
-    if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
-    const pid = Number(entry.name);
-    let descriptors: string[];
-    try {
-      descriptors = fs.readdirSync(`/proc/${pid}/fd`);
-    } catch {
-      continue;
-    }
-    for (const descriptor of descriptors) {
-      try {
-        const target = fs.readlinkSync(`/proc/${pid}/fd/${descriptor}`);
-        const match = target.match(/^socket:\[(\d+)\]$/);
-        const owners = match ? ownersByInode.get(match[1]) : undefined;
-        owners?.add(pid);
-      } catch {
-        continue;
-      }
-    }
-  }
-  return { ownersByInode, addressesByInode };
-}
-
 function listenersOwnedBy(record: ProcessRecord, listeners = readPortListeners()): boolean {
-  const inodes = [...listeners.ownersByInode.entries()];
-  return (
-    inodes.length > 0 &&
-    inodes.every((entry) => entry[1].size === 1 && entry[1].has(record.pid))
-  );
+  return inspectListenersOwnedBy(record.pid, listeners);
 }
 
 function listenersLoopbackOnly(listeners = readPortListeners()): boolean {
-  const addresses = [...listeners.addressesByInode.entries()];
-  return (
-    addresses.length > 0 &&
-    addresses.every((entry) => entry[1].size === 1 && areAllLoopbackListeners(entry[1]))
-  );
+  return inspectListenersLoopbackOnly(listeners);
 }
 
 function listenersSecurelyOwnedBy(record: ProcessRecord, listeners = readPortListeners()): boolean {
-  return listenersOwnedBy(record, listeners) && listenersLoopbackOnly(listeners);
+  return inspectListenersSecurelyOwnedBy(record.pid, listeners);
 }
 
 function listenerPortIsBusy(listeners = readPortListeners()): boolean {
-  return listeners.ownersByInode.size > 0;
+  return inspectListenerPortIsBusy(listeners);
 }
 
 function readProcessRecord(): ProcessRecord | null {
   const record = readJson<ProcessRecord>(paths.process);
-  if (!record) return null;
+  if (record === null) return null;
   if (
     !Number.isSafeInteger(record.pid) ||
     typeof record.startTime !== "string" ||
@@ -534,7 +208,7 @@ function readProcessRecord(): ProcessRecord | null {
 
 function readManagerRecord(): ManagerRecord | null {
   const record = readJson<ManagerRecord>(paths.manager);
-  if (!record) return null;
+  if (record === null) return null;
   if (
     !Number.isSafeInteger(record.pid) ||
     typeof record.startTime !== "string" ||
@@ -554,6 +228,29 @@ function removeProcessRecord(record: ProcessRecord): void {
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function cancelRestartBackoff(): void {
+  const backoff = pendingRestartBackoff;
+  if (!backoff) return;
+  pendingRestartBackoff = undefined;
+  clearTimeout(backoff.timer);
+  backoff.resolve();
+}
+
+function invalidateRestartGeneration(): void {
+  restartGeneration++;
+  cancelRestartBackoff();
+}
+
+function waitForRestartBackoff(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      if (pendingRestartBackoff?.timer === timer) pendingRestartBackoff = undefined;
+      resolve();
+    }, milliseconds);
+    pendingRestartBackoff = { timer, resolve };
+  });
 }
 
 async function waitForPidExit(record: ProcessRecord, timeoutMs: number): Promise<boolean> {
@@ -635,8 +332,24 @@ function assertManagerIsSelf(): void {
   }
 }
 
+function registerManager(): void {
+  const self = getSelfIdentity();
+  const manager = readManagerRecord();
+  if (
+    manager?.pid === self.pid &&
+    manager.startTime === self.startTime &&
+    manager.executablePath === self.executablePath
+  ) {
+    return;
+  }
+  if (manager && managerIsAlive(manager)) {
+    throw new Error("CLIProxy is managed by another live Bun process");
+  }
+  writeAtomic(paths.manager, `${JSON.stringify(self, null, 2)}\n`);
+}
+
 async function withLifecycleLock<T>(callback: () => Promise<T>): Promise<T> {
-  ensureLayout();
+  ensureLayout(paths);
   const release = await lockfile.lock(paths.root, {
     lockfilePath: paths.lock,
     stale: CLIPROXY_LOCK_TIMING.staleMs,
@@ -695,7 +408,7 @@ function registerShutdownSignals(): void {
 
 function readTransaction(): UpdateTransaction | null {
   const transaction = readJson<UpdateTransaction>(paths.transaction);
-  if (!transaction) return null;
+  if (transaction === null) return null;
   if (
     !(transaction.fromVersion === null || typeof transaction.fromVersion === "string") ||
     typeof transaction.toVersion !== "string" ||
@@ -717,68 +430,19 @@ async function recoverInterruptedUpdate(): Promise<void> {
   await stopActiveChild();
   await reconcileStaleChild();
   if (transaction.fromVersion) {
-    if (!isInstalledVersion(transaction.fromVersion)) {
+    if (!isInstalledVersion(paths, transaction.fromVersion)) {
       throw new Error("CLIProxy recovery version is missing; refusing to discard the update marker");
     }
-    setCurrentVersion(transaction.fromVersion);
+    setCurrentVersion(paths, transaction.fromVersion);
   } else {
-    removeCurrentVersion(transaction.toVersion);
+    removeCurrentVersion(paths, transaction.toVersion);
   }
-  const state = readState();
+  const state = readState(paths);
   state.installedVersion = transaction.fromVersion;
   state.pinnedVersion = transaction.previousPin;
   state.desiredRunning = transaction.previousDesiredRunning ?? state.desiredRunning;
-  writeState(state);
+  writeState(paths, state);
   fs.rmSync(paths.transaction, { force: true });
-}
-
-function cleanupStagingVersions(): void {
-  for (const entry of fs.readdirSync(paths.versions, { withFileTypes: true })) {
-    if (!entry.name.startsWith(".staging-")) continue;
-    const stagingPath = path.join(paths.versions, entry.name);
-    const metadata = fs.lstatSync(stagingPath);
-    if (!metadata.isDirectory() || metadata.isSymbolicLink()) continue;
-    fs.chmodSync(stagingPath, 0o700);
-    fs.rmSync(stagingPath, { recursive: true, force: true });
-  }
-}
-
-async function prepareVersion(version: string): Promise<void> {
-  const finalDir = path.join(paths.versions, version);
-  if (fs.existsSync(finalDir)) {
-    if (!isInstalledVersion(version)) throw new Error("Existing CLIProxy version directory is invalid");
-    return;
-  }
-
-  const archive = await fetchVerifiedBinary(version);
-  const stagingDir = path.join(paths.versions, `.staging-${version}-${randomUUID()}`);
-  const extractDir = path.join(stagingDir, "extract");
-  fs.mkdirSync(extractDir, { recursive: true, mode: 0o700 });
-  try {
-    await extractVerifiedBinary(archive, extractDir);
-    const extractedBinary = path.join(extractDir, EXECUTABLE_NAME);
-    const metadata = fs.lstatSync(extractedBinary);
-    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size <= 0) {
-      throw new Error("CLIProxy archive did not produce a regular executable");
-    }
-    const stagedBinary = path.join(stagingDir, EXECUTABLE_NAME);
-    fs.renameSync(extractedBinary, stagedBinary);
-    fs.chmodSync(stagedBinary, 0o555);
-    writeAtomic(path.join(stagingDir, ".version"), `${version}\n`, 0o444);
-    fs.rmSync(extractDir, { recursive: true, force: true });
-    fs.chmodSync(stagingDir, 0o555);
-    fs.renameSync(stagingDir, finalDir);
-  } catch (error) {
-    fs.chmodSync(stagingDir, 0o700);
-    fs.rmSync(stagingDir, { recursive: true, force: true });
-    throw error;
-  }
-}
-
-function readSecret(filePath: string): string {
-  const secret = fs.readFileSync(filePath, "utf8").trim();
-  if (secret.length < 32) throw new Error("CLIProxy persisted secret is invalid");
-  return secret;
 }
 
 async function probeApiHealth(): Promise<boolean> {
@@ -858,7 +522,7 @@ function monitorChild(child: ChildProcess, record: ProcessRecord): void {
     const wasIntentional = intentionalExits.delete(child.pid);
     if (!recordWasCurrent || wasIntentional || shuttingDown) return;
     try {
-      if (!readState().desiredRunning || generation !== restartGeneration) return;
+      if (!readState(paths).desiredRunning || generation !== restartGeneration) return;
       void scheduleRestart(record, exitCode, generation);
     } catch (error) {
       lastError = error instanceof Error ? error.message : "CLIProxy state could not be read";
@@ -883,10 +547,10 @@ async function scheduleRestart(
     const uptime = Date.now() - Date.parse(exitedRecord.startedAt);
     if (uptime >= 60_000) restartAttempts = 0;
     while (restartAttempts < MAX_RESTARTS && !shuttingDown && generation === restartGeneration) {
-      await delay(RESTART_BACKOFF_MS[restartAttempts++]);
+      await waitForRestartBackoff(RESTART_BACKOFF_MS[restartAttempts++]);
       let desiredRunning = false;
       try {
-        desiredRunning = readState().desiredRunning;
+        desiredRunning = readState(paths).desiredRunning;
       } catch (error) {
         lastError = error instanceof Error ? error.message : "CLIProxy state could not be read";
         return;
@@ -896,7 +560,7 @@ async function scheduleRestart(
         let attemptedStart = false;
         await withLifecycleLock(async () => {
           assertManagerIsSelf();
-          if (activeProcess || !readState().desiredRunning || shuttingDown) return;
+          if (activeProcess || !readState(paths).desiredRunning || shuttingDown) return;
           const listeners = readPortListeners();
           if (listenerPortIsBusy(listeners)) {
             throw new Error("CLIProxy port 8317 is owned by another process");
@@ -924,15 +588,15 @@ async function scheduleRestart(
 }
 
 async function startCurrentVersion(): Promise<void> {
-  const version = currentVersion();
+  const version = currentVersion(paths);
   if (!version) throw new Error("No valid CLIProxy version is installed");
-  ensureConfig();
+  ensureConfig(paths);
   const listeners = readPortListeners();
   if (listenerPortIsBusy(listeners)) {
     throw new Error("CLIProxy port 8317 is owned by another process");
   }
 
-  const executablePath = fs.realpathSync(path.join(paths.current, EXECUTABLE_NAME));
+  const executablePath = fs.realpathSync(path.join(paths.current, CLIPROXY_EXECUTABLE_NAME));
   const manager = getSelfIdentity();
   const child = Bun.spawn([executablePath, "-config", paths.config], {
     cwd: paths.root,
@@ -985,12 +649,12 @@ async function startCurrentVersion(): Promise<void> {
 
 async function installLocked(input: string): Promise<string> {
   const desiredVersion = input === "latest" ? (await getAvailableVersions()).latest : normalizeVersion(input);
-  const state = readState();
-  const oldVersion = currentVersion();
+  const state = readState(paths);
+  const oldVersion = currentVersion(paths);
   if (oldVersion === desiredVersion) {
     state.installedVersion = oldVersion;
     state.pinnedVersion = input === "latest" ? null : desiredVersion;
-    writeState(state);
+    writeState(paths, state);
     if (state.desiredRunning && !activeProcess) {
       await reconcileStaleChild();
       await startCurrentVersion();
@@ -1000,7 +664,7 @@ async function installLocked(input: string): Promise<string> {
 
   const previouslyInstalled = Boolean(oldVersion || state.installedVersion);
   const runAfterInstall = shouldStartAfterInstall(state.desiredRunning, previouslyInstalled);
-  await prepareVersion(desiredVersion);
+  await prepareVersion(paths, desiredVersion);
   const transaction: UpdateTransaction = {
     fromVersion: oldVersion,
     toVersion: desiredVersion,
@@ -1012,34 +676,34 @@ async function installLocked(input: string): Promise<string> {
   try {
     await stopActiveChild();
     if (!activeProcess) await reconcileStaleChild();
-    setCurrentVersion(desiredVersion);
+    setCurrentVersion(paths, desiredVersion);
     if (runAfterInstall) {
       if (!state.desiredRunning) {
-        const startingState = readState();
+        const startingState = readState(paths);
         startingState.desiredRunning = true;
-        writeState(startingState);
+        writeState(paths, startingState);
       }
       await startCurrentVersion();
     }
 
-    const committed = readState();
+    const committed = readState(paths);
     committed.installedVersion = desiredVersion;
     committed.pinnedVersion = input === "latest" ? null : desiredVersion;
     committed.desiredRunning = runAfterInstall;
-    writeState(committed);
+    writeState(paths, committed);
     fs.rmSync(paths.transaction, { force: true });
     return desiredVersion;
   } catch (error) {
     let rollbackError: unknown;
     try {
       await stopActiveChild();
-      if (oldVersion) setCurrentVersion(oldVersion);
-      else removeCurrentVersion(desiredVersion);
-      const restored = readState();
+      if (oldVersion) setCurrentVersion(paths, oldVersion);
+      else removeCurrentVersion(paths, desiredVersion);
+      const restored = readState(paths);
       restored.installedVersion = oldVersion;
       restored.pinnedVersion = transaction.previousPin;
       restored.desiredRunning = transaction.previousDesiredRunning ?? state.desiredRunning;
-      writeState(restored);
+      writeState(paths, restored);
       if (restored.desiredRunning && oldVersion) await startCurrentVersion();
       fs.rmSync(paths.transaction, { force: true });
     } catch (failure) {
@@ -1059,10 +723,10 @@ async function installLocked(input: string): Promise<string> {
 export async function initCliproxy(): Promise<void> {
   await withOperation("initializing", () =>
     withLifecycleLock(async () => {
-      ensureLayout();
-      cleanupStagingVersions();
-      const initialState = readState();
-      if (!fs.existsSync(paths.state)) writeState(initialState);
+      ensureLayout(paths);
+      cleanupStagingVersions(paths);
+      const initialState = readState(paths);
+      if (!fs.existsSync(paths.state)) writeState(paths, initialState);
       assertManagerIsSelf();
       await recoverInterruptedUpdate();
       if (
@@ -1073,14 +737,14 @@ export async function initCliproxy(): Promise<void> {
       ) {
         await reconcileStaleChild();
       }
-      ensureConfig();
-      writeAtomic(paths.manager, `${JSON.stringify(getSelfIdentity(), null, 2)}\n`);
+      ensureConfig(paths);
+      registerManager();
       shuttingDown = false;
-      restartGeneration++;
+      invalidateRestartGeneration();
       registerShutdownSignals();
 
-      const state = readState();
-      const startupAction = getStartupAction(state.desiredRunning, currentVersion() !== null);
+      const state = readState(paths);
+      const startupAction = getStartupAction(state.desiredRunning, currentVersion(paths) !== null);
       if (startupAction === "start") {
         if (activeProcess && activeRecord) await waitUntilHealthy(activeRecord);
         else await startCurrentVersion();
@@ -1093,7 +757,8 @@ export async function initCliproxy(): Promise<void> {
 
 export async function shutdownCliproxy(): Promise<void> {
   shuttingDown = true;
-  restartGeneration++;
+  invalidateRestartGeneration();
+  if (restartTask) await restartTask;
   await withLifecycleLock(async () => {
     assertManagerIsSelf();
     await recoverInterruptedUpdate();
@@ -1113,9 +778,9 @@ export async function getStatus(): Promise<CliproxyStatus> {
   let version: string | null = null;
   let statusError = lastError;
   try {
-    state = readState();
+    state = readState(paths);
     processRecord = readProcessRecord();
-    version = currentVersion();
+    version = currentVersion(paths);
   } catch (error) {
     statusError = error instanceof Error ? error.message : "CLIProxy status could not be read";
   }
@@ -1140,7 +805,7 @@ export async function getStatus(): Promise<CliproxyStatus> {
     conflict = listenerPortIsBusy(listeners) && (!processRunning || !loopbackOnly);
     healthy = processRunning && loopbackOnly;
   }
-  const installed = Boolean(version && isInstalledVersion(version));
+  const installed = Boolean(version && isInstalledVersion(paths, version));
   return {
     installed,
     version,
@@ -1160,8 +825,8 @@ export async function getVersions(): Promise<CliproxyVersions> {
   let state = defaultState();
   let current: string | null = null;
   try {
-    state = readState();
-    current = currentVersion();
+    state = readState(paths);
+    current = currentVersion(paths);
   } catch {
     // Release discovery remains useful even if local state needs repair.
   }
@@ -1174,18 +839,10 @@ export async function install(version: string): Promise<string> {
     withLifecycleLock(async () => {
       assertManagerIsSelf();
       await recoverInterruptedUpdate();
-      const state = readState();
-      if (!fs.existsSync(paths.state)) writeState(state);
-      ensureConfig();
-      const manager = getSelfIdentity();
-      const previousManager = readManagerRecord();
-      if (
-        !previousManager ||
-        previousManager.pid !== manager.pid ||
-        previousManager.startTime !== manager.startTime
-      ) {
-        writeAtomic(paths.manager, `${JSON.stringify(manager, null, 2)}\n`);
-      }
+      const state = readState(paths);
+      if (!fs.existsSync(paths.state)) writeState(paths, state);
+      ensureConfig(paths);
+      registerManager();
       return installLocked(normalizedInput);
     })
   );
@@ -1196,23 +853,15 @@ export async function start(): Promise<void> {
     withLifecycleLock(async () => {
       assertManagerIsSelf();
       await recoverInterruptedUpdate();
-      if (!currentVersion()) {
+      if (!currentVersion(paths)) {
         throw new Error("No CLIProxy version is installed; install a version before starting");
       }
-      const manager = getSelfIdentity();
-      const previousManager = readManagerRecord();
-      if (
-        !previousManager ||
-        previousManager.pid !== manager.pid ||
-        previousManager.startTime !== manager.startTime
-      ) {
-        writeAtomic(paths.manager, `${JSON.stringify(manager, null, 2)}\n`);
-      }
-      const state = readState();
+      registerManager();
+      const state = readState(paths);
       state.desiredRunning = true;
-      writeState(state);
+      writeState(paths, state);
       shuttingDown = false;
-      restartGeneration++;
+      invalidateRestartGeneration();
       restartAttempts = 0;
       if (activeProcess) {
         if (
@@ -1237,10 +886,10 @@ export async function stop(): Promise<void> {
     withLifecycleLock(async () => {
       assertManagerIsSelf();
       await recoverInterruptedUpdate();
-      const state = readState();
+      const state = readState(paths);
       state.desiredRunning = false;
-      writeState(state);
-      restartGeneration++;
+      writeState(paths, state);
+      invalidateRestartGeneration();
       restartAttempts = 0;
       if (activeProcess) {
         await stopActiveChild();
@@ -1260,13 +909,14 @@ export async function restart(): Promise<void> {
     withLifecycleLock(async () => {
       assertManagerIsSelf();
       await recoverInterruptedUpdate();
-      if (!currentVersion()) {
+      if (!currentVersion(paths)) {
         throw new Error("No CLIProxy version is installed; install a version before restarting");
       }
-      const state = readState();
+      registerManager();
+      const state = readState(paths);
       state.desiredRunning = true;
-      writeState(state);
-      restartGeneration++;
+      writeState(paths, state);
+      invalidateRestartGeneration();
       restartAttempts = 0;
       shuttingDown = false;
       await stopActiveChild();
