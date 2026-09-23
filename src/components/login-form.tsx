@@ -1,5 +1,6 @@
 import { cn } from "cn"
 import * as React from "react"
+import { KeyRoundIcon, RouteIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -36,16 +37,23 @@ export function LoginForm({
 }) {
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
-      <Card>
-        <CardHeader>
-          <CardTitle>Welcome back</CardTitle>
-          <CardDescription>Enter your password to continue.</CardDescription>
+      <Card className="border-border/70 shadow-2xl shadow-slate-950/10">
+        <CardHeader className="space-y-5">
+          <div className="flex size-11 items-center justify-center rounded-xl bg-slate-950 text-white dark:bg-slate-100 dark:text-slate-950">
+            <RouteIcon className="size-5" />
+          </div>
+          <div>
+            <CardTitle className="text-2xl">RawRoute</CardTitle>
+            <CardDescription className="mt-2">
+              A protocol-preserving gateway for your model providers.
+            </CardDescription>
+          </div>
         </CardHeader>
         <CardContent>
           <form onSubmit={onSubmit}>
             <FieldGroup>
               <Field>
-                <FieldLabel htmlFor="auth-password">Password</FieldLabel>
+                  <FieldLabel htmlFor="auth-password">Password</FieldLabel>
                 <Input
                   id="auth-password"
                   type="password"
@@ -59,7 +67,8 @@ export function LoginForm({
                 />
               </Field>
               <Field>
-                <Button type="submit" disabled={isLoading}>
+                <Button className="w-full" type="submit" disabled={isLoading}>
+                  {isLoading ? null : <KeyRoundIcon />}
                   {isLoading ? "Signing in..." : "Sign in"}
                 </Button>
                 {error && <FieldError>{error}</FieldError>}

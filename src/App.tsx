@@ -1,18 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { LoginForm } from "@/components/login-form";
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { DashboardShell } from "@/components/dashboard/dashboard-shell";
 import "./index.css";
-
-type HelloResponse = {
-  message: string;
-};
 
 type AuthResponse = {
   authenticated?: boolean;
@@ -20,14 +9,15 @@ type AuthResponse = {
   defaultPasswordHint?: string | null;
   error?: string;
 };
+type HelloResponse = { message: string };
 
 export function App() {
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [serviceMessage, setServiceMessage] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isDefaultPassword, setIsDefaultPassword] = useState(false);
-  const [defaultPasswordHint, setDefaultPasswordHint] = useState<string | null>(null);
+  const [defaultPasswordHint, setDefaultPasswordHint] = useState<string | null>(
+    null,
+  );
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
@@ -37,16 +27,16 @@ export function App() {
     const controller = new AbortController();
 
     fetch("/api/hello", { signal: controller.signal })
-      .then(async response => {
-        if (!response.ok) throw new Error(`Request failed with ${response.status}`);
+      .then(async (response) => {
+        if (!response.ok)
+          throw new Error(`Request failed with ${response.status}`);
         return response.json() as Promise<HelloResponse>;
       })
-      .then(data => setMessage(data.message))
-      .catch(fetchError => {
-        if (fetchError instanceof DOMException && fetchError.name === "AbortError") return;
-        setError(fetchError instanceof Error ? fetchError.message : "Request failed");
-      })
-      .finally(() => setIsLoading(false));
+      .then((data) => setServiceMessage(data.message))
+      .catch((requestError) => {
+        if (requestError instanceof DOMException && requestError.name === "AbortError") return;
+        setServiceMessage(requestError instanceof Error ? requestError.message : "Bun API unavailable");
+      });
 
     return () => controller.abort();
   }, []);
@@ -54,19 +44,31 @@ export function App() {
   useEffect(() => {
     const controller = new AbortController();
 
-    fetch("/api/auth/status", { credentials: "same-origin", signal: controller.signal })
-      .then(async response => {
-        if (!response.ok) throw new Error(`Request failed with ${response.status}`);
+    fetch("/api/auth/status", {
+      credentials: "same-origin",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok)
+          throw new Error(`Request failed with ${response.status}`);
         return response.json() as Promise<AuthResponse>;
       })
-      .then(data => {
+      .then((data) => {
         setIsAuthenticated(data.authenticated === true);
         setIsDefaultPassword(data.isDefaultPassword === true);
         setDefaultPasswordHint(data.defaultPasswordHint ?? null);
       })
-      .catch(fetchError => {
-        if (fetchError instanceof DOMException && fetchError.name === "AbortError") return;
-        setAuthError(fetchError instanceof Error ? fetchError.message : "Unable to load session");
+      .catch((fetchError) => {
+        if (
+          fetchError instanceof DOMException &&
+          fetchError.name === "AbortError"
+        )
+          return;
+        setAuthError(
+          fetchError instanceof Error
+            ? fetchError.message
+            : "Unable to load session",
+        );
       })
       .finally(() => setIsSessionLoading(false));
 
@@ -97,7 +99,9 @@ export function App() {
       setAuthPassword("");
     } catch (authRequestError) {
       setAuthError(
-        authRequestError instanceof Error ? authRequestError.message : "Authentication failed",
+        authRequestError instanceof Error
+          ? authRequestError.message
+          : "Authentication failed",
       );
     } finally {
       setIsAuthLoading(false);
@@ -113,82 +117,45 @@ export function App() {
         method: "POST",
         credentials: "same-origin",
       });
-      if (!response.ok) throw new Error(`Request failed with ${response.status}`);
+      if (!response.ok)
+        throw new Error(`Request failed with ${response.status}`);
       setIsAuthenticated(false);
       setIsDefaultPassword(false);
       setDefaultPasswordHint(null);
     } catch (logoutError) {
-      setAuthError(logoutError instanceof Error ? logoutError.message : "Logout failed");
+      setAuthError(
+        logoutError instanceof Error ? logoutError.message : "Logout failed",
+      );
     } finally {
       setIsAuthLoading(false);
     }
   }
 
+  if (isAuthenticated) {
+    return <DashboardShell onLogout={handleLogout} isDefaultPassword={isDefaultPassword} />;
+  }
+
   return (
-    <main className="min-h-svh bg-background text-foreground">
-      <div className="mx-auto grid min-h-svh w-full max-w-6xl items-center gap-12 px-6 py-12 lg:grid-cols-[1fr_420px] lg:px-12">
-        <section className="hidden lg:block" aria-labelledby="page-title">
-          <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">
-            Bun fullstack starter
-          </p>
-          <h1 id="page-title" className="mt-6 max-w-xl text-6xl font-semibold tracking-tight">
-            One server.
-            <br />
-            React on the edge.
-          </h1>
-          <p className="mt-6 max-w-lg text-lg text-muted-foreground">
-            Bun serves this page, bundles the React client, and handles authentication with a
-            Turso-compatible libSQL database.
-          </p>
-          <Card className="mt-10 max-w-md">
-            <CardHeader>
-              <CardTitle>GET /api/hello</CardTitle>
-              <CardDescription>Server status from the Bun backend.</CardDescription>
-            </CardHeader>
-            <CardContent aria-live="polite">
-              {isLoading && <p className="text-sm text-muted-foreground">Calling the Bun API...</p>}
-              {message && <p className="text-sm text-primary">{message}</p>}
-              {error && <p className="text-sm text-destructive">{error}</p>}
-            </CardContent>
-          </Card>
-        </section>
-        <section className="flex w-full justify-center" aria-label="Password authentication">
-          {isSessionLoading ? (
-            <Card className="w-full max-w-sm">
-              <CardContent>
-                <p className="py-8 text-center text-sm text-muted-foreground">Loading session...</p>
-              </CardContent>
-            </Card>
-          ) : isAuthenticated ? (
-            <Card className="w-full max-w-sm" aria-live="polite">
-              <CardHeader>
-                <CardTitle>You&apos;re signed in</CardTitle>
-                <CardDescription>Password session active.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {isDefaultPassword && (
-                  <p className="mb-4 text-sm text-amber-600 dark:text-amber-400">
-                    You are using the default password. Change it before exposing this app publicly.
-                  </p>
-                )}
-                <Button type="button" className="w-full" onClick={handleLogout} disabled={isAuthLoading}>
-                  {isAuthLoading ? "Signing out..." : "Sign out"}
-                </Button>
-              </CardContent>
-            </Card>
-          ) : (
-            <LoginForm
-              className="w-full max-w-sm"
-              password={authPassword}
-              error={authError}
-              isLoading={isAuthLoading}
-              defaultPasswordHint={defaultPasswordHint}
-              onPasswordChange={event => setAuthPassword(event.target.value)}
-              onSubmit={handleAuthSubmit}
-            />
-          )}
-        </section>
-      </div>
+    <main className="relative flex min-h-svh w-full items-center justify-center overflow-hidden bg-[#f3f0e8] p-6 dark:bg-slate-950 md:p-10">
+      <div className="pointer-events-none absolute inset-0 opacity-40 [background-image:linear-gradient(to_right,#94a3b822_1px,transparent_1px),linear-gradient(to_bottom,#94a3b822_1px,transparent_1px)] [background-size:32px_32px]" />
+      <div className="pointer-events-none absolute -left-32 top-12 size-96 rounded-full bg-amber-300/30 blur-3xl" />
+      <section className="relative w-full max-w-sm" aria-label="Password authentication">
+        <p className="sr-only" role="status" aria-live="polite">{serviceMessage}</p>
+        {isSessionLoading ? (
+          <div className="rounded-xl border bg-card p-8 text-center text-sm text-muted-foreground shadow-xl">
+            Loading session...
+          </div>
+        ) : (
+          <LoginForm
+            password={authPassword}
+            error={authError}
+            isLoading={isAuthLoading}
+            defaultPasswordHint={defaultPasswordHint}
+            onPasswordChange={(event) => setAuthPassword(event.target.value)}
+            onSubmit={handleAuthSubmit}
+          />
+        )}
+      </section>
     </main>
   );
 }
