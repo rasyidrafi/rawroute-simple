@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { type DashboardRoute } from "@/components/app-sidebar";
 import { Budgets } from "@/components/dashboard/budgets-page";
 import { CliproxyPage } from "@/components/dashboard/cliproxy-page";
@@ -12,7 +12,6 @@ import { ProviderDetail, Providers } from "@/components/dashboard/providers-page
 import { Routing } from "@/components/dashboard/routing-page";
 import { Settings } from "@/components/dashboard/settings-page";
 import { ToolGateway } from "@/components/dashboard/tool-gateway-page";
-import { Usage } from "@/components/dashboard/usage-page";
 import {
   type Provider,
   initialAliases,
@@ -24,6 +23,12 @@ import {
   initialPriceGroups,
   initialProviders,
 } from "@/mock/dashboard-data";
+
+const Usage = lazy(() =>
+  import("@/components/dashboard/usage-page").then(({ Usage }) => ({
+    default: Usage,
+  })),
+);
 
 type Props = {
   route: DashboardRoute;
@@ -80,7 +85,18 @@ export function DashboardViews({
         models={models}
       />
     );
-  if (route === "usage") return <Usage />;
+  if (route === "usage")
+    return (
+      <Suspense
+        fallback={
+          <div className="flex min-h-48 flex-1 items-center justify-center text-sm text-muted-foreground" role="status">
+            Loading usage dashboard…
+          </div>
+        }
+      >
+        <Usage />
+      </Suspense>
+    );
   if (route === "budgets")
     return <Budgets budgets={budgets} setBudgets={setBudgets} keys={keys} />;
   if (route === "pricing")

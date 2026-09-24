@@ -202,6 +202,7 @@ export function CliproxyPage() {
   const [versionsRefreshing, setVersionsRefreshing] = useState(false);
   const [selectedVersion, setSelectedVersion] = useState("");
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const operationPending = Boolean(status?.operation);
 
   async function refreshStatus() {
     setStatusRefreshing(true);
@@ -235,11 +236,16 @@ export function CliproxyPage() {
     }
   }
 
+  // These client-side effects load and poll the managed service's external state.
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect
   useEffect(() => {
     void refreshStatus();
     void refreshVersions();
   }, []);
 
+  // Polling is the lifecycle boundary for this server-managed process; there is
+  // no shared query cache or server component layer in this Bun dashboard.
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect
   useEffect(() => {
     if (busy || statusRefreshing) return;
     let active = true;
@@ -258,20 +264,20 @@ export function CliproxyPage() {
         if (active) {
           timeout = window.setTimeout(
             () => void pollStatus(),
-            statusPollInterval(Boolean(status?.operation)),
+            statusPollInterval(operationPending),
           );
         }
       }
     };
     timeout = window.setTimeout(
       () => void pollStatus(),
-      statusPollInterval(Boolean(status?.operation)),
+      statusPollInterval(operationPending),
     );
     return () => {
       active = false;
       window.clearTimeout(timeout);
     };
-  }, [status?.operation?.name, status?.operation?.startedAt, busy, statusRefreshing]);
+  }, [operationPending, busy, statusRefreshing]);
 
   async function runAction(action: PendingAction | { type: Exclude<LifecycleAction, "install" | "stop"> }) {
     const lifecycleAction: LifecycleAction = action.type;
@@ -375,70 +381,18 @@ export function CliproxyPage() {
         <Card className="overflow-hidden">
           <div className="h-1 bg-gradient-to-r from-slate-900 via-slate-500 to-emerald-600 dark:from-slate-100 dark:via-slate-500 dark:to-emerald-400" />
           <CardHeader>
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-              <div className="flex items-start gap-3">
-                <div className="flex size-11 shrink-0 items-center justify-center rounded-xl border bg-muted/60">
-                  <ServerIcon className="size-5" />
-                </div>
-                <div>
-                  <CardTitle>
-                    <span className="flex flex-wrap items-center gap-2">
-                      Managed process
-                      <Badge variant={label === "Error" || label === "Conflict" ? "destructive" : "outline"} className={statusBadgeClass(label)}>
-                        {busy ? <LoaderCircleIcon className="animate-spin" /> : label === "Running" ? <CheckCircle2Icon /> : null}
-                        {busy ? actionLabel(busy) : label}
-                      </Badge>
-                    </span>
-                  </CardTitle>
-                  <CardDescription className="mt-1">
-                    {status?.operation
-                      ? `${operationLabel(status.operation.name)} since ${new Date(status.operation.startedAt).toLocaleTimeString()}`
-                      : status?.healthy
-                        ? "Health check passed; the proxy is accepting authenticated requests."
-                        : status?.processRunning
-                          ? "The process exists but did not pass its health check."
-                          : status?.installed
-                            ? "Installed and ready to start."
-                            : "No managed CLIProxyAPI release is installed."}
-                  </CardDescription>
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2 sm:justify-end">
-                {status?.installed && !status.processRunning ? (
-                  <Button disabled={blocked || !status.installed} onClick={() => void runAction({ type: "start" })}>
-                    <PlayIcon /> Start
-                  </Button>
-                ) : null}
-                {status?.processRunning ? (
-                  <>
-                    <Button variant="outline" disabled={blocked} onClick={() => void runAction({ type: "restart" })}>
-                      <RotateCwIcon /> Restart
-                    </Button>
-                    <Button variant="destructive" disabled={blocked} onClick={() => setPendingAction({ type: "stop" })}>
-                      <SquareIcon /> Stop
-                    </Button>
-                  </>
-                ) : null}
-              </div>
-            </div>
+            <ServiceHeader
+              status={status}
+              label={label}
+              busy={busy}
+              blocked={blocked}
+              onAction={runAction}
+              onRequestStop={() => setPendingAction({ type: "stop" })}
+            />
           </CardHeader>
           <CardContent className="min-w-0">
             <div className="flex min-w-0 flex-col gap-5">
-            {status?.lastError && (
-              <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm" role="alert">
-                <AlertCircleIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
-                <div className="min-w-0">
-                  <p className="font-medium">Service reported an error</p>
-                  <p className="mt-1 break-words text-muted-foreground">{status.lastError}</p>
-                </div>
-              </div>
-            )}
-            {status?.conflict && (
-              <div className="flex items-start gap-2 rounded-lg border border-amber-600/30 bg-amber-500/10 p-3 text-sm text-amber-950 dark:text-amber-100" role="alert">
-                <CircleHelpIcon className="mt-0.5 size-4 shrink-0" />
-                <p className="min-w-0 break-words">Port {port} is occupied by a process that CLIProxyAPI does not own. Lifecycle actions are disabled to avoid signaling an unrelated process.</p>
-              </div>
-            )}
+            <ServiceAlerts status={status} port={port} />
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Detail label="Installed version" value={status?.version ?? "Not installed"} mono />
               <Detail label="Selected release" value={status?.pinnedVersion ? `${status.pinnedVersion} (pinned)` : "Latest"} />
@@ -446,120 +400,355 @@ export function CliproxyPage() {
               <Detail label="Process ID" value={status?.pid ? `${status.pid}` : "Not exposed by status API"} mono />
             </div>
 
-            <div className="min-w-0 flex flex-col gap-3 rounded-lg border bg-muted/20 p-3">
-              <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium">Release management</p>
-                  <p className={`break-words text-xs ${versionsError ? "text-destructive" : "text-muted-foreground"}`}>
-                    {versions?.latest
-                      ? `Latest available: ${versions.latest}`
-                      : versionsError ?? "Checking release catalog..."}
-                  </p>
-                  {versionsError && isAuthenticationError(versionsError) && (
-                    <p className="mt-1 break-words text-xs text-muted-foreground">
-                      Your dashboard session may have expired. Refresh this page to sign in again.
-                    </p>
-                  )}
-                </div>
-                <Button
-                  className="sm:shrink-0"
-                  size="sm"
-                  variant="outline"
-                  disabled={blocked || versionsRefreshing}
-                  onClick={() => void refreshVersions()}
-                >
-                  <RefreshCwIcon className={versionsRefreshing ? "animate-spin" : ""} />
-                  {versionsRefreshing ? "Checking" : "Refresh releases"}
-                </Button>
-              </div>
-              <div className="grid min-w-0 gap-2 lg:grid-cols-2">
-                <Button
-                  className="w-full"
-                  disabled={releaseBlocked || latestIsCurrent}
-                  onClick={() => versions && confirmInstall("latest")}
-                >
-                  <DownloadIcon />
-                  {status?.installed ? "Update to latest" : "Install latest"}
-                </Button>
-                <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                  <Select
-                    value={selectedRelease?.version ?? ""}
-                    onValueChange={(value) => value && setSelectedVersion(value)}
-                    disabled={releaseBlocked || !versions?.versions.length}
-                  >
-                    <SelectTrigger aria-label="Choose an exact CLIProxyAPI release" className="w-full min-w-0">
-                      <SelectValue placeholder="Pick exact release" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {versions?.versions.map((release) => (
-                        <SelectItem key={release.version} value={release.version}>
-                          {release.version}{release.version === versions.latest ? " - latest" : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    className="w-full sm:w-auto"
-                    variant="outline"
-                    disabled={
-                      releaseBlocked ||
-                      !canInstallExactRelease(
-                        selectedRelease?.version ?? null,
-                        status?.version ?? null,
-                        status?.pinnedVersion ?? null,
-                      )
-                    }
-                    onClick={() => selectedRelease && confirmInstall(selectedRelease.version)}
-                  >
-                    Select
-                  </Button>
-                </div>
-              </div>
-            </div>
+            <ReleaseManagementCard
+              status={status}
+              versions={versions}
+              versionsError={versionsError}
+              versionsRefreshing={versionsRefreshing}
+              blocked={blocked}
+              releaseBlocked={releaseBlocked}
+              latestIsCurrent={latestIsCurrent}
+              selectedRelease={selectedRelease}
+              onRefresh={refreshVersions}
+              onSelectVersion={setSelectedVersion}
+              onConfirmInstall={confirmInstall}
+            />
             </div>
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Connection details</CardTitle>
-            <CardDescription>
-              CLIProxyAPI binds to loopback only. Use the dashboard's same-origin API URL in clients; requests are forwarded by the application.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="min-w-0">
-            <div className="grid min-w-0 gap-3 lg:grid-cols-3">
-              <Detail label="Client base URL" value={`${typeof window === "undefined" ? "" : window.location.origin}/v1`} mono wrap copyable />
-              <Detail label="Upstream listener" value={`127.0.0.1:${port}`} mono />
-              <Detail label="Health" value={status?.healthy ? "Healthy" : status?.processRunning ? "Not healthy" : "Not running"} />
-            </div>
-          </CardContent>
-        </Card>
+        <ConnectionDetailsCard status={status} port={port} />
       </div>
 
-      <AlertDialog open={Boolean(pendingAction)} onOpenChange={(open) => !open && setPendingAction(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{pendingActionTitle(pendingAction)}</AlertDialogTitle>
-            <AlertDialogDescription>{pendingActionDescription(pendingAction)}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={Boolean(busy)}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={blocked}
-              variant={pendingAction?.type === "stop" ? "destructive" : "default"}
-              onClick={() => {
-                const action = pendingAction;
-                setPendingAction(null);
-                if (action) void runAction(action);
-              }}
-            >
-              {pendingAction?.type === "stop" ? "Stop CLIProxyAPI" : "Confirm release"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <PendingActionDialog
+        action={pendingAction}
+        setAction={setPendingAction}
+        busy={Boolean(busy)}
+        blocked={blocked}
+        onConfirm={runAction}
+      />
     </main>
+  );
+}
+
+type ImmediateAction = { type: "start" | "restart" };
+type ActionToRun = PendingAction | ImmediateAction;
+
+function ServiceHeader({
+  status,
+  label,
+  busy,
+  blocked,
+  onAction,
+  onRequestStop,
+}: {
+  status: StatusDetails | null;
+  label: string;
+  busy: LifecycleAction | null;
+  blocked: boolean;
+  onAction: (action: ActionToRun) => Promise<void>;
+  onRequestStop: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex items-start gap-3">
+        <div className="flex size-11 shrink-0 items-center justify-center rounded-xl border bg-muted/60">
+          <ServerIcon className="size-5" />
+        </div>
+        <div>
+          <CardTitle>
+            <span className="flex flex-wrap items-center gap-2">
+              Managed process
+              <ServiceStatusBadge label={label} busy={busy} />
+            </span>
+          </CardTitle>
+          <CardDescription className="mt-1">{serviceDescription(status)}</CardDescription>
+        </div>
+      </div>
+      <ServiceActionButtons
+        status={status}
+        blocked={blocked}
+        onAction={onAction}
+        onRequestStop={onRequestStop}
+      />
+    </div>
+  );
+}
+
+function serviceDescription(status: StatusDetails | null) {
+  if (status?.operation) {
+    return `${operationLabel(status.operation.name)} since ${new Date(status.operation.startedAt).toLocaleTimeString()}`;
+  }
+  if (status?.healthy) return "Health check passed; the proxy is accepting authenticated requests.";
+  if (status?.processRunning) return "The process exists but did not pass its health check.";
+  if (status?.installed) return "Installed and ready to start.";
+  return "No managed CLIProxyAPI release is installed.";
+}
+
+function ServiceStatusBadge({
+  label,
+  busy,
+}: {
+  label: string;
+  busy: LifecycleAction | null;
+}) {
+  return (
+    <Badge variant={label === "Error" || label === "Conflict" ? "destructive" : "outline"} className={statusBadgeClass(label)}>
+      {busy ? <LoaderCircleIcon className="animate-spin" /> : label === "Running" ? <CheckCircle2Icon /> : null}
+      {busy ? actionLabel(busy) : label}
+    </Badge>
+  );
+}
+
+function ServiceActionButtons({
+  status,
+  blocked,
+  onAction,
+  onRequestStop,
+}: {
+  status: StatusDetails | null;
+  blocked: boolean;
+  onAction: (action: ActionToRun) => Promise<void>;
+  onRequestStop: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2 sm:justify-end">
+      {status?.installed && !status.processRunning && (
+        <Button disabled={blocked} onClick={() => void onAction({ type: "start" })}>
+          <PlayIcon /> Start
+        </Button>
+      )}
+      {status?.processRunning && (
+        <>
+          <Button variant="outline" disabled={blocked} onClick={() => void onAction({ type: "restart" })}>
+            <RotateCwIcon /> Restart
+          </Button>
+          <Button variant="destructive" disabled={blocked} onClick={onRequestStop}>
+            <SquareIcon /> Stop
+          </Button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ServiceAlerts({
+  status,
+  port,
+}: {
+  status: StatusDetails | null;
+  port: number;
+}) {
+  return (
+    <>
+      {status?.lastError && (
+        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm" role="alert">
+          <AlertCircleIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
+          <div className="min-w-0">
+            <p className="font-medium">Service reported an error</p>
+            <p className="mt-1 break-words text-muted-foreground">{status.lastError}</p>
+          </div>
+        </div>
+      )}
+      {status?.conflict && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-600/30 bg-amber-500/10 p-3 text-sm text-amber-950 dark:text-amber-100" role="alert">
+          <CircleHelpIcon className="mt-0.5 size-4 shrink-0" />
+          <p className="min-w-0 break-words">Port {port} is occupied by a process that CLIProxyAPI does not own. Lifecycle actions are disabled to avoid signaling an unrelated process.</p>
+        </div>
+      )}
+    </>
+  );
+}
+
+function ReleaseManagementCard({
+  status,
+  versions,
+  versionsError,
+  versionsRefreshing,
+  blocked,
+  releaseBlocked,
+  latestIsCurrent,
+  selectedRelease,
+  onRefresh,
+  onSelectVersion,
+  onConfirmInstall,
+}: {
+  status: StatusDetails | null;
+  versions: CliproxyVersions | null;
+  versionsError: string | null;
+  versionsRefreshing: boolean;
+  blocked: boolean;
+  releaseBlocked: boolean;
+  latestIsCurrent: boolean;
+  selectedRelease: CliproxyVersions["versions"][number] | undefined;
+  onRefresh: () => Promise<void>;
+  onSelectVersion: React.Dispatch<React.SetStateAction<string>>;
+  onConfirmInstall: (requestVersion: string) => void;
+}) {
+  return (
+    <div className="min-w-0 flex flex-col gap-3 rounded-lg border bg-muted/20 p-3">
+      <ReleaseCatalogStatus
+        versions={versions}
+        error={versionsError}
+        refreshing={versionsRefreshing}
+        blocked={blocked}
+        onRefresh={onRefresh}
+      />
+      <ReleaseInstallControls
+        status={status}
+        versions={versions}
+        releaseBlocked={releaseBlocked}
+        latestIsCurrent={latestIsCurrent}
+        selectedRelease={selectedRelease}
+        onSelectVersion={onSelectVersion}
+        onConfirmInstall={onConfirmInstall}
+      />
+    </div>
+  );
+}
+
+function ReleaseCatalogStatus({
+  versions,
+  error,
+  refreshing,
+  blocked,
+  onRefresh,
+}: {
+  versions: CliproxyVersions | null;
+  error: string | null;
+  refreshing: boolean;
+  blocked: boolean;
+  onRefresh: () => Promise<void>;
+}) {
+  return (
+    <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium">Release management</p>
+        <p className={`break-words text-xs ${error ? "text-destructive" : "text-muted-foreground"}`}>
+          {versions?.latest ? `Latest available: ${versions.latest}` : error ?? "Checking release catalog..."}
+        </p>
+        {error && isAuthenticationError(error) && (
+          <p className="mt-1 break-words text-xs text-muted-foreground">
+            Your dashboard session may have expired. Refresh this page to sign in again.
+          </p>
+        )}
+      </div>
+      <Button className="sm:shrink-0" size="sm" variant="outline" disabled={blocked || refreshing} onClick={() => void onRefresh()}>
+        <RefreshCwIcon className={refreshing ? "animate-spin" : ""} />
+        {refreshing ? "Checking" : "Refresh releases"}
+      </Button>
+    </div>
+  );
+}
+
+function ReleaseInstallControls({
+  status,
+  versions,
+  releaseBlocked,
+  latestIsCurrent,
+  selectedRelease,
+  onSelectVersion,
+  onConfirmInstall,
+}: {
+  status: StatusDetails | null;
+  versions: CliproxyVersions | null;
+  releaseBlocked: boolean;
+  latestIsCurrent: boolean;
+  selectedRelease: CliproxyVersions["versions"][number] | undefined;
+  onSelectVersion: React.Dispatch<React.SetStateAction<string>>;
+  onConfirmInstall: (requestVersion: string) => void;
+}) {
+  return (
+    <div className="grid min-w-0 gap-2 lg:grid-cols-2">
+      <Button className="w-full" disabled={releaseBlocked || latestIsCurrent} onClick={() => versions && onConfirmInstall("latest")}>
+        <DownloadIcon />
+        {status?.installed ? "Update to latest" : "Install latest"}
+      </Button>
+      <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+        <Select value={selectedRelease?.version ?? ""} onValueChange={(value) => value && onSelectVersion(value)} disabled={releaseBlocked || !versions?.versions.length}>
+          <SelectTrigger aria-label="Choose an exact CLIProxyAPI release" className="w-full min-w-0">
+            <SelectValue placeholder="Pick exact release" />
+          </SelectTrigger>
+          <SelectContent>
+            {versions?.versions.map((release) => (
+              <SelectItem key={release.version} value={release.version}>
+                {release.version}{release.version === versions.latest ? " - latest" : ""}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button className="w-full sm:w-auto" variant="outline" disabled={releaseBlocked || !canInstallExactRelease(selectedRelease?.version ?? null, status?.version ?? null, status?.pinnedVersion ?? null)} onClick={() => selectedRelease && onConfirmInstall(selectedRelease.version)}>
+          Select
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ConnectionDetailsCard({
+  status,
+  port,
+}: {
+  status: StatusDetails | null;
+  port: number;
+}) {
+  const health = status?.healthy ? "Healthy" : status?.processRunning ? "Not healthy" : "Not running";
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Connection details</CardTitle>
+        <CardDescription>
+          CLIProxyAPI binds to loopback only. Use the dashboard's same-origin API URL in clients; requests are forwarded by the application.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="min-w-0">
+        <div className="grid min-w-0 gap-3 lg:grid-cols-3">
+          <Detail label="Client base URL" value={`${typeof window === "undefined" ? "" : window.location.origin}/v1`} mono wrap copyable />
+          <Detail label="Upstream listener" value={`127.0.0.1:${port}`} mono />
+          <Detail label="Health" value={health} />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function PendingActionDialog({
+  action,
+  setAction,
+  busy,
+  blocked,
+  onConfirm,
+}: {
+  action: PendingAction | null;
+  setAction: React.Dispatch<React.SetStateAction<PendingAction | null>>;
+  busy: boolean;
+  blocked: boolean;
+  onConfirm: (action: ActionToRun) => Promise<void>;
+}) {
+  return (
+    <AlertDialog open={Boolean(action)} onOpenChange={(open) => !open && setAction(null)}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{pendingActionTitle(action)}</AlertDialogTitle>
+          <AlertDialogDescription>{pendingActionDescription(action)}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={blocked}
+            variant={action?.type === "stop" ? "destructive" : "default"}
+            onClick={() => {
+              const confirmedAction = action;
+              setAction(null);
+              if (confirmedAction) void onConfirm(confirmedAction);
+            }}
+          >
+            {action?.type === "stop" ? "Stop CLIProxyAPI" : "Confirm release"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 

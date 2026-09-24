@@ -4,6 +4,7 @@ import { useState } from "react";
 import { cn } from "cn";
 import { ChevronsUpDownIcon, PlusIcon, SparklesIcon, Trash2Icon } from "lucide-react";
 import { Confirm, Metadata, notify, Page } from "@/components/dashboard/page-ui";
+import { DataTableHeader } from "@/components/dashboard/data-table-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,9 +15,15 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Budget, GatewayKey } from "@/mock/dashboard-data";
+
+const budgetDateFormatter = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
 
 export function Budgets({
   budgets,
@@ -43,7 +50,7 @@ export function Budgets({
   const [beyondLimits, setBeyondLimits] = useState(false);
   const allocated = budgets.reduce((sum, budget) => sum + budget.limit, 0);
   const spent = budgets.reduce((sum, budget) => sum + budget.spent, 0);
-  const dateLabel = (value: string) => new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date(`${value}T00:00:00`));
+  const dateLabel = (value: string) => budgetDateFormatter.format(new Date(`${value}T00:00:00`));
   const sortedBudgets = [...budgets].sort((left, right) => {
     if (sortBy === "name") return left.key.localeCompare(right.key);
     if (sortBy === "usage") return right.spent / right.limit - left.spent / left.limit;
@@ -269,89 +276,134 @@ export function Budgets({
                 </PopoverContent>
               </Popover>
             </div>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Key</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Limit</TableHead>
-                  <TableHead>Usage</TableHead>
-                  <TableHead />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sortedBudgets.map((budget) => (
-                  <TableRow key={budget.id}>
-                    <TableCell>
-                      <span className="font-medium">{budget.key}</span>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                      <Switch
-                        checked={budget.enabled}
-                        onCheckedChange={(enabled) =>
-                          setBudgets((items) =>
-                            items.map((item) =>
-                              item.id === budget.id
-                                ? { ...item, enabled }
-                                : item,
-                            ),
-                          )
-                        }
-                        aria-label={`Enable budget for ${budget.key}`}
-                      />
-                      <Badge variant={budget.enabled ? "secondary" : "outline"}>{budget.enabled ? "Active" : "Disabled"}</Badge>
-                      </div>
-                    </TableCell>
-                    <TableCell>{unlimited ? <span className="unlimited-shine inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-sm font-semibold"><span className="font-mono">∞</span>Unlimited</span> : <span className="tabular-nums">${budget.limit.toFixed(2)}</span>}</TableCell>
-                    <TableCell className="min-w-40">
-                      <div className="mb-2 flex items-center justify-between gap-3 text-xs">
-                        <span className="font-medium text-muted-foreground">${budget.spent.toFixed(2)} / ${budget.limit.toFixed(2)}</span>
-                        {unlimited ? <span className="unlimited-shine inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-semibold"><span className="font-mono">∞</span>Unlimited</span> : <span className="text-muted-foreground">{Math.round((budget.spent / budget.limit) * 100)}%</span>}
-                      </div>
-                      <div className={cn(unlimited && "unlimited-progress")}>
-                        <Progress
-                          value={unlimited ? 100 : Math.min(100, (budget.spent / budget.limit) * 100)}
-                        />
-                      </div>
-                      <div className="mt-1 text-xs text-muted-foreground">{unlimited ? "Unlimited Usage" : `$${Math.max(0, budget.limit - budget.spent).toFixed(2)} remaining`}</div>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          setEdit(budget);
-                          setEditLimit(String(budget.limit));
-                        }}
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        size="icon-sm"
-                        variant="ghost"
-                        aria-label={`Delete budget for ${budget.key}`}
-                        onClick={() => setRemoveBudget(budget)}
-                      >
-                        <Trash2Icon />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <BudgetTable
+              budgets={sortedBudgets}
+              unlimited={unlimited}
+              setBudgets={setBudgets}
+              onEdit={(budget) => {
+                setEdit(budget);
+                setEditLimit(String(budget.limit));
+              }}
+              onRemove={setRemoveBudget}
+            />
           </div>
         </CardContent>
       </Card>
+      <BudgetDialogs
+        unlimited={unlimited}
+        setUnlimited={setUnlimited}
+        confirmUnlimited={confirmUnlimited}
+        setConfirmUnlimited={setConfirmUnlimited}
+        removeBudget={removeBudget}
+        setRemoveBudget={setRemoveBudget}
+        edit={edit}
+        setEdit={setEdit}
+        editLimit={editLimit}
+        setEditLimit={setEditLimit}
+        setBudgets={setBudgets}
+      />
+    </Page>
+  );
+}
+
+function BudgetTable({
+  budgets,
+  unlimited,
+  setBudgets,
+  onEdit,
+  onRemove,
+}: {
+  budgets: Budget[];
+  unlimited: boolean;
+  setBudgets: React.Dispatch<React.SetStateAction<Budget[]>>;
+  onEdit: (budget: Budget) => void;
+  onRemove: (budget: Budget) => void;
+}) {
+  return (
+    <Table>
+      <DataTableHeader columns={[
+        { id: "key", label: "Key" },
+        { id: "status", label: "Status" },
+        { id: "limit", label: "Limit" },
+        { id: "usage", label: "Usage" },
+        { id: "actions", label: "" },
+      ]} />
+      <TableBody>
+        {budgets.map((budget) => (
+          <TableRow key={budget.id}>
+            <TableCell><span className="font-medium">{budget.key}</span></TableCell>
+            <TableCell>
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={budget.enabled}
+                  onCheckedChange={(enabled) => setBudgets((items) => items.map((item) => item.id === budget.id ? { ...item, enabled } : item))}
+                  aria-label={`Enable budget for ${budget.key}`}
+                />
+                <Badge variant={budget.enabled ? "secondary" : "outline"}>{budget.enabled ? "Active" : "Disabled"}</Badge>
+              </div>
+            </TableCell>
+            <TableCell>
+              {unlimited
+                ? <span className="unlimited-shine inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-sm font-semibold"><span className="font-mono">∞</span>Unlimited</span>
+                : <span className="tabular-nums">${budget.limit.toFixed(2)}</span>}
+            </TableCell>
+            <TableCell className="min-w-40">
+              <div className="mb-2 flex items-center justify-between gap-3 text-xs">
+                <span className="font-medium text-muted-foreground">${budget.spent.toFixed(2)} / ${budget.limit.toFixed(2)}</span>
+                {unlimited
+                  ? <span className="unlimited-shine inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-semibold"><span className="font-mono">∞</span>Unlimited</span>
+                  : <span className="text-muted-foreground">{Math.round((budget.spent / budget.limit) * 100)}%</span>}
+              </div>
+              <div className={cn(unlimited && "unlimited-progress")}>
+                <Progress value={unlimited ? 100 : Math.min(100, (budget.spent / budget.limit) * 100)} />
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">{unlimited ? "Unlimited Usage" : `$${Math.max(0, budget.limit - budget.spent).toFixed(2)} remaining`}</div>
+            </TableCell>
+            <TableCell className="text-right">
+              <Button size="sm" variant="ghost" onClick={() => onEdit(budget)}>Edit</Button>
+              <Button size="icon-sm" variant="ghost" aria-label={`Delete budget for ${budget.key}`} onClick={() => onRemove(budget)}>
+                <Trash2Icon />
+              </Button>
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+function BudgetDialogs({
+  unlimited,
+  setUnlimited,
+  confirmUnlimited,
+  setConfirmUnlimited,
+  removeBudget,
+  setRemoveBudget,
+  edit,
+  setEdit,
+  editLimit,
+  setEditLimit,
+  setBudgets,
+}: {
+  unlimited: boolean;
+  setUnlimited: React.Dispatch<React.SetStateAction<boolean>>;
+  confirmUnlimited: boolean;
+  setConfirmUnlimited: React.Dispatch<React.SetStateAction<boolean>>;
+  removeBudget: Budget | null;
+  setRemoveBudget: React.Dispatch<React.SetStateAction<Budget | null>>;
+  edit: Budget | null;
+  setEdit: React.Dispatch<React.SetStateAction<Budget | null>>;
+  editLimit: string;
+  setEditLimit: React.Dispatch<React.SetStateAction<string>>;
+  setBudgets: React.Dispatch<React.SetStateAction<Budget[]>>;
+}) {
+  return (
+    <>
       <Confirm
         open={confirmUnlimited}
         onOpenChange={setConfirmUnlimited}
         title={`${unlimited ? "Deactivate" : "Activate"} Unlimited Mode?`}
-        description={
-          unlimited
-            ? "Budget limits will resume immediately."
-            : "All configured budget limits will be bypassed."
-        }
+        description={unlimited ? "Budget limits will resume immediately." : "All configured budget limits will be bypassed."}
         onConfirm={() => {
           setUnlimited((value) => !value);
           setConfirmUnlimited(false);
@@ -369,30 +421,21 @@ export function Budgets({
           notify("Budget deleted");
         }}
       />
-      <Dialog
-        open={Boolean(edit)}
-        onOpenChange={(open) => !open && setEdit(null)}
-      >
+      <Dialog open={Boolean(edit)} onOpenChange={(open) => !open && setEdit(null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Edit budget</DialogTitle>
-            <DialogDescription>
-              Update the weekly limit for {edit?.key}.
-            </DialogDescription>
+            <DialogDescription>Update the weekly limit for {edit?.key}.</DialogDescription>
           </DialogHeader>
-          <label className="grid gap-2 py-4 text-sm font-medium" htmlFor="edit-budget-limit">Weekly USD limit<Input id="edit-budget-limit" type="number" min="0.01" step="0.01" value={editLimit} onChange={(event) => setEditLimit(event.target.value)} /></label>
+          <label className="grid gap-2 py-4 text-sm font-medium" htmlFor="edit-budget-limit">
+            Weekly USD limit
+            <Input id="edit-budget-limit" type="number" min="0.01" step="0.01" value={editLimit} onChange={(event) => setEditLimit(event.target.value)} />
+          </label>
           <DialogFooter>
             <Button
               disabled={!Number.isFinite(Number(editLimit)) || Number(editLimit) <= 0}
               onClick={() => {
-                if (edit)
-                  setBudgets((items) =>
-                    items.map((item) =>
-                      item.id === edit.id
-                        ? { ...item, limit: Number(editLimit) }
-                        : item,
-                    ),
-                  );
+                if (edit) setBudgets((items) => items.map((item) => item.id === edit.id ? { ...item, limit: Number(editLimit) } : item));
                 setEdit(null);
                 notify("Budget updated");
               }}
@@ -402,6 +445,6 @@ export function Budgets({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Page>
+    </>
   );
 }

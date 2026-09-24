@@ -148,6 +148,14 @@ export function Routing({
       }),
     );
   }
+  function confirmRemove() {
+    if (remove?.type === "alias")
+      setAliases((items) => items.filter((item) => item.id !== remove.id));
+    if (remove?.type === "combo")
+      setCombos((items) => items.filter((item) => item.id !== remove.id));
+    setRemove(null);
+    notify("Route deleted");
+  }
   return (
     <Page>
       <Card>
@@ -296,16 +304,61 @@ export function Routing({
           </Table>
         </CardContent>
       </Card>
+      <RoutingDialogs
+        editor={editor}
+        setEditor={setEditor}
+        editingId={editingId}
+        name={name}
+        setName={setName}
+        target={target}
+        setTarget={setTarget}
+        models={models}
+        remove={remove}
+        setRemove={setRemove}
+        onSave={save}
+        onConfirmRemove={confirmRemove}
+      />
+    </Page>
+  );
+}
+
+function RoutingDialogs({
+  editor,
+  setEditor,
+  editingId,
+  name,
+  setName,
+  target,
+  setTarget,
+  models,
+  remove,
+  setRemove,
+  onSave,
+  onConfirmRemove,
+}: {
+  editor: Editor;
+  setEditor: (editor: Editor) => void;
+  editingId: string | null;
+  name: string;
+  setName: (name: string) => void;
+  target: string;
+  setTarget: (target: string) => void;
+  models: Model[];
+  remove: { type: "alias" | "combo"; id: string; name: string } | null;
+  setRemove: (remove: { type: "alias" | "combo"; id: string; name: string } | null) => void;
+  onSave: (event: FormEvent) => void;
+  onConfirmRemove: () => void;
+}) {
+  return (
+    <>
       <Dialog
         open={editor === "alias" || editor === "combo"}
         onOpenChange={(openState) => !openState && setEditor(null)}
       >
         <DialogContent>
-          <form onSubmit={save}>
+          <form onSubmit={onSave}>
             <DialogHeader>
-              <DialogTitle>
-                {editingId ? "Edit" : "Create"} {editor}
-              </DialogTitle>
+              <DialogTitle>{editingId ? "Edit" : "Create"} {editor}</DialogTitle>
               <DialogDescription>
                 {editor === "combo"
                   ? "The first selected model becomes the primary, followed by a visible fallback chain."
@@ -315,32 +368,19 @@ export function Routing({
             <div className="grid gap-4 py-4">
               <label className="text-sm font-medium" htmlFor="route-name">
                 Gateway ID
-                <Input
-                  id="route-name"
-                  className="mt-2"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                />
+                <Input id="route-name" className="mt-2" value={name} onChange={(event) => setName(event.target.value)} />
               </label>
               <Select value={target} onValueChange={(value) => value !== null && setTarget(value)}>
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {models.map((model) => (
-                    <SelectItem value={model.id} key={model.id}>
-                      {model.id}
-                    </SelectItem>
-                  ))}
+                  {models.map((model) => <SelectItem value={model.id} key={model.id}>{model.id}</SelectItem>)}
                   <SelectItem value="shared/acme/claude-sonnet">shared/acme/claude-sonnet</SelectItem>
                   <SelectItem value="shared/research/gpt-5">shared/research/gpt-5</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <DialogFooter>
-              <Button type="submit" disabled={!name.trim()}>
-                {editingId ? "Save" : "Create"} {editor}
-              </Button>
+              <Button type="submit" disabled={!name.trim()}>{editingId ? "Save" : "Create"} {editor}</Button>
             </DialogFooter>
           </form>
         </DialogContent>
@@ -350,17 +390,8 @@ export function Routing({
         onOpenChange={(openState) => !openState && setRemove(null)}
         title={`Delete ${remove?.name}?`}
         description="This local model route will stop accepting requests."
-        onConfirm={() => {
-          if (remove?.type === "alias")
-            setAliases((items) =>
-              items.filter((item) => item.id !== remove.id),
-            );
-          if (remove?.type === "combo")
-            setCombos((items) => items.filter((item) => item.id !== remove.id));
-          setRemove(null);
-          notify("Route deleted");
-        }}
+        onConfirm={onConfirmRemove}
       />
-    </Page>
+    </>
   );
 }

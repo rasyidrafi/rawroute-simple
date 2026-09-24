@@ -1,0 +1,18 @@
+{
+  "$schema": "https://react.doctor/schema/config.json",
+  "ignore": {
+    "files": ["dist/**"],
+    "overrides": [
+      // Recharts is only reached through the split, React.lazy-loaded Usage route.
+      {
+        "files": ["src/components/dashboard/usage-page.tsx", "src/components/ui/chart.tsx"],
+        "rules": ["react-doctor/prefer-dynamic-import"]
+      },
+      // These Base UI/shadcn primitives intentionally own their styling grammar.
+      {
+        "files": ["src/components/ui/**"],
+        "rules": ["shadcn/no-restyle"]
+      }
+    ]
+  }
+}

@@ -3,13 +3,14 @@
 import { useState, type FormEvent } from "react";
 import { AlertTriangleIcon, CheckIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { Confirm, notify, Page } from "@/components/dashboard/page-ui";
+import { DataTableHeader } from "@/components/dashboard/data-table-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import type { Model, PriceGroup } from "@/mock/dashboard-data";
 
 export function Pricing({
@@ -82,6 +83,11 @@ export function Pricing({
     setRateOpen(null);
     notify("New pricing version saved");
   }
+  function confirmRemove() {
+    if (remove) setGroups((items) => items.filter((item) => item.id !== remove.id));
+    setRemove(null);
+    notify("Model group deleted");
+  }
   return (
     <Page>
       <div
@@ -148,15 +154,13 @@ export function Pricing({
         </CardHeader>
         <CardContent>
           <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Group</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Models</TableHead>
-                <TableHead>Current pricing</TableHead>
-                <TableHead />
-              </TableRow>
-            </TableHeader>
+            <DataTableHeader columns={[
+              { id: "group", label: "Group" },
+              { id: "type", label: "Type" },
+              { id: "models", label: "Models" },
+              { id: "pricing", label: "Current pricing" },
+              { id: "actions", label: "" },
+            ]} />
             <TableBody>
               {groups.map((group) => (
                 <TableRow key={group.id}>
@@ -262,6 +266,96 @@ export function Pricing({
           </div>
         </CardContent>
       </Card>
+      <PricingDialogs
+        groups={groups}
+        models={models}
+        open={open}
+        setOpen={setOpen}
+        editingGroup={editingGroup}
+        setEditingGroup={setEditingGroup}
+        name={name}
+        setName={setName}
+        input={input}
+        setInput={setInput}
+        output={output}
+        setOutput={setOutput}
+        cacheRead={cacheRead}
+        setCacheRead={setCacheRead}
+        cacheCreation={cacheCreation}
+        setCacheCreation={setCacheCreation}
+        selectedModels={selectedModels}
+        setSelectedModels={setSelectedModels}
+        onCreate={create}
+        rateOpen={rateOpen}
+        setRateOpen={setRateOpen}
+        onSaveRates={saveRates}
+        remove={remove}
+        setRemove={setRemove}
+        onConfirmRemove={confirmRemove}
+      />
+    </Page>
+  );
+}
+
+function PricingDialogs({
+  groups,
+  models,
+  open,
+  setOpen,
+  editingGroup,
+  setEditingGroup,
+  name,
+  setName,
+  input,
+  setInput,
+  output,
+  setOutput,
+  cacheRead,
+  setCacheRead,
+  cacheCreation,
+  setCacheCreation,
+  selectedModels,
+  setSelectedModels,
+  onCreate,
+  rateOpen,
+  setRateOpen,
+  onSaveRates,
+  remove,
+  setRemove,
+  onConfirmRemove,
+}: {
+  groups: PriceGroup[];
+  models: Model[];
+  open: boolean;
+  setOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  editingGroup: PriceGroup | null;
+  setEditingGroup: React.Dispatch<React.SetStateAction<PriceGroup | null>>;
+  name: string;
+  setName: React.Dispatch<React.SetStateAction<string>>;
+  input: string;
+  setInput: React.Dispatch<React.SetStateAction<string>>;
+  output: string;
+  setOutput: React.Dispatch<React.SetStateAction<string>>;
+  cacheRead: string;
+  setCacheRead: React.Dispatch<React.SetStateAction<string>>;
+  cacheCreation: string;
+  setCacheCreation: React.Dispatch<React.SetStateAction<string>>;
+  selectedModels: string[];
+  setSelectedModels: React.Dispatch<React.SetStateAction<string[]>>;
+  onCreate: (event: FormEvent) => void;
+  rateOpen: PriceGroup | null;
+  setRateOpen: React.Dispatch<React.SetStateAction<PriceGroup | null>>;
+  onSaveRates: (event: FormEvent) => void;
+  remove: PriceGroup | null;
+  setRemove: React.Dispatch<React.SetStateAction<PriceGroup | null>>;
+  onConfirmRemove: () => void;
+}) {
+  const groupedModelIds = new Set(groups.flatMap((group) => group.models));
+  const editingModelIds = new Set(editingGroup?.models ?? []);
+  const selectedModelIds = new Set(selectedModels);
+
+  return (
+    <>
       <Dialog
         open={open}
         onOpenChange={(value) => {
@@ -270,109 +364,54 @@ export function Pricing({
         }}
       >
         <DialogContent>
-          <form onSubmit={create}>
+          <form onSubmit={onCreate}>
             <DialogHeader>
-              <DialogTitle>
-                {editingGroup ? "Edit model group" : "Create model group"}
-              </DialogTitle>
-              <DialogDescription>
-                Choose currently ungrouped models and establish initial prices.
-              </DialogDescription>
+              <DialogTitle>{editingGroup ? "Edit model group" : "Create model group"}</DialogTitle>
+              <DialogDescription>Choose currently ungrouped models and establish initial prices.</DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
               <label className="text-sm font-medium" htmlFor="group-name">
                 Group name
-                <Input
-                  id="group-name"
-                  className="mt-2"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                />
+                <Input id="group-name" className="mt-2" value={name} onChange={(event) => setName(event.target.value)} />
               </label>
               <div className="space-y-2">
                 <div className="text-sm font-medium">Models in group</div>
                 <div className="max-h-44 divide-y overflow-y-auto rounded-lg border">
-                  {models.filter((model) => !grouped.has(model.id) || editingGroup?.models.includes(model.id)).map((model) => (
+                  {models.filter((model) => !groupedModelIds.has(model.id) || editingModelIds.has(model.id)).map((model) => (
                     <label key={model.id} className="flex cursor-pointer items-center gap-3 px-3 py-2.5 text-sm hover:bg-muted/40">
-                      <Checkbox checked={selectedModels.includes(model.id)} onCheckedChange={(checked) => setSelectedModels((current) => checked ? [...new Set([...current, model.id])] : current.filter((id) => id !== model.id))} />
+                      <Checkbox checked={selectedModelIds.has(model.id)} onCheckedChange={(checked) => setSelectedModels((current) => checked ? [...new Set([...current, model.id])] : current.filter((id) => id !== model.id))} />
                       <span className="min-w-0"><span className="block truncate font-medium">{model.name}</span><code className="block truncate text-xs text-muted-foreground">{model.id}</code></span>
                     </label>
                   ))}
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <label className="text-sm font-medium" htmlFor="group-input">
-                  Input / 1M
-                  <Input
-                    id="group-input"
-                    className="mt-2"
-                    type="number"
-                    value={input}
-                    onChange={(event) => setInput(event.target.value)}
-                  />
-                </label>
-                <label className="text-sm font-medium" htmlFor="group-cache-read">Cache read / 1M<Input id="group-cache-read" className="mt-2" type="number" min="0" step="any" value={cacheRead} onChange={(event) => setCacheRead(event.target.value)} /></label>
-                <label className="text-sm font-medium" htmlFor="group-cache-creation">Cache creation / 1M<Input id="group-cache-creation" className="mt-2" type="number" min="0" step="any" value={cacheCreation} onChange={(event) => setCacheCreation(event.target.value)} /></label>
-                <label className="text-sm font-medium" htmlFor="group-output">
-                  Output / 1M
-                  <Input
-                    id="group-output"
-                    className="mt-2"
-                    type="number"
-                    value={output}
-                    onChange={(event) => setOutput(event.target.value)}
-                  />
-                </label>
+                <RateInput id="group-input" label="Input / 1M" value={input} onChange={setInput} />
+                <RateInput id="group-cache-read" label="Cache read / 1M" value={cacheRead} onChange={setCacheRead} min="0" />
+                <RateInput id="group-cache-creation" label="Cache creation / 1M" value={cacheCreation} onChange={setCacheCreation} min="0" />
+                <RateInput id="group-output" label="Output / 1M" value={output} onChange={setOutput} />
               </div>
             </div>
             <DialogFooter>
-              <Button type="submit" disabled={!name.trim()}>
-                {editingGroup ? "Save group" : "Create group"}
-              </Button>
+              <Button type="submit" disabled={!name.trim()}>{editingGroup ? "Save group" : "Create group"}</Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
-      <Dialog
-        open={Boolean(rateOpen)}
-        onOpenChange={(value) => !value && setRateOpen(null)}
-      >
+      <Dialog open={Boolean(rateOpen)} onOpenChange={(value) => !value && setRateOpen(null)}>
         <DialogContent>
-          <form onSubmit={saveRates}>
+          <form onSubmit={onSaveRates}>
             <DialogHeader>
               <DialogTitle>Update {rateOpen?.name} rates</DialogTitle>
-              <DialogDescription>
-                Saving creates a new pricing version and mock historical
-                recalculation.
-              </DialogDescription>
+              <DialogDescription>Saving creates a new pricing version and mock historical recalculation.</DialogDescription>
             </DialogHeader>
             <div className="grid grid-cols-2 gap-3 py-4 sm:grid-cols-4">
-              <label className="text-sm font-medium" htmlFor="rate-input">
-                Input / 1M
-                <Input
-                  id="rate-input"
-                  className="mt-2"
-                  type="number"
-                  value={input}
-                  onChange={(event) => setInput(event.target.value)}
-                />
-              </label>
-              <label className="text-sm font-medium" htmlFor="rate-cache-read">Cache read / 1M<Input id="rate-cache-read" className="mt-2" type="number" min="0" step="any" value={cacheRead} onChange={(event) => setCacheRead(event.target.value)} /></label>
-              <label className="text-sm font-medium" htmlFor="rate-cache-creation">Cache creation / 1M<Input id="rate-cache-creation" className="mt-2" type="number" min="0" step="any" value={cacheCreation} onChange={(event) => setCacheCreation(event.target.value)} /></label>
-              <label className="text-sm font-medium" htmlFor="rate-output">
-                Output / 1M
-                <Input
-                  id="rate-output"
-                  className="mt-2"
-                  type="number"
-                  value={output}
-                  onChange={(event) => setOutput(event.target.value)}
-                />
-              </label>
+              <RateInput id="rate-input" label="Input / 1M" value={input} onChange={setInput} />
+              <RateInput id="rate-cache-read" label="Cache read / 1M" value={cacheRead} onChange={setCacheRead} min="0" />
+              <RateInput id="rate-cache-creation" label="Cache creation / 1M" value={cacheCreation} onChange={setCacheCreation} min="0" />
+              <RateInput id="rate-output" label="Output / 1M" value={output} onChange={setOutput} />
             </div>
-            <DialogFooter>
-              <Button type="submit">Save new version</Button>
-            </DialogFooter>
+            <DialogFooter><Button type="submit">Save new version</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
@@ -381,13 +420,29 @@ export function Pricing({
         onOpenChange={(value) => !value && setRemove(null)}
         title={`Delete ${remove?.name}?`}
         description="The mock pricing group and its history will be removed."
-        onConfirm={() => {
-          if (remove)
-            setGroups((items) => items.filter((item) => item.id !== remove.id));
-          setRemove(null);
-          notify("Model group deleted");
-        }}
+        onConfirm={onConfirmRemove}
       />
-    </Page>
+    </>
+  );
+}
+
+function RateInput({
+  id,
+  label,
+  value,
+  onChange,
+  min,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  min?: string;
+}) {
+  return (
+    <label className="text-sm font-medium" htmlFor={id}>
+      {label}
+      <Input id={id} className="mt-2" type="number" min={min} step="any" value={value} onChange={(event) => onChange(event.target.value)} />
+    </label>
   );
 }

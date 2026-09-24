@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { type DashboardRoute } from "@/components/app-sidebar";
 import { Confirm, Metadata, notify, Page } from "@/components/dashboard/page-ui";
+import { DataTableHeader } from "@/components/dashboard/data-table-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -38,8 +39,6 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableHead,
-  TableHeader,
   TableRow,
 } from "@/components/ui/table";
 import type { Model, Provider } from "@/mock/dashboard-data";
@@ -110,17 +109,15 @@ export function Providers({
         </CardHeader>
         <CardContent>
           <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Provider</TableHead>
-                <TableHead>Prefix</TableHead>
-                <TableHead>Protocol</TableHead>
-                <TableHead>Origin</TableHead>
-                <TableHead>API keys</TableHead>
-                <TableHead>Models</TableHead>
-                <TableHead />
-              </TableRow>
-            </TableHeader>
+            <DataTableHeader columns={[
+              { id: "provider", label: "Provider" },
+              { id: "prefix", label: "Prefix" },
+              { id: "protocol", label: "Protocol" },
+              { id: "origin", label: "Origin" },
+              { id: "keys", label: "API keys" },
+              { id: "models", label: "Models" },
+              { id: "actions", label: "" },
+            ]} />
             <TableBody>
               {providers.map((provider) => (
                 <TableRow
@@ -189,16 +186,14 @@ export function Providers({
         </CardHeader>
         <CardContent>
           <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Provider</TableHead>
-                <TableHead>Prefix</TableHead>
-                <TableHead>Protocol</TableHead>
-                <TableHead>Accounts</TableHead>
-                <TableHead>Models</TableHead>
-                <TableHead />
-              </TableRow>
-            </TableHeader>
+            <DataTableHeader columns={[
+              { id: "provider", label: "Provider" },
+              { id: "prefix", label: "Prefix" },
+              { id: "protocol", label: "Protocol" },
+              { id: "accounts", label: "Accounts" },
+              { id: "models", label: "Models" },
+              { id: "actions", label: "" },
+            ]} />
             <TableBody>
               <TableRow className="cursor-pointer" onClick={() => onNavigate("codex")}>
                 <TableCell><span className="font-medium">Codex Providers</span></TableCell>
@@ -347,6 +342,36 @@ export function ProviderDetail({
     setProviderEditOpen(false);
     notify("Provider updated");
   }
+  function saveModel(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!modelName.trim()) return;
+
+    if (editingModel) {
+      setModels((items) =>
+        items.map((item) =>
+          item.id === editingModel.id
+            ? { ...item, name: modelName, upstream: modelName }
+            : item,
+        ),
+      );
+    } else {
+      setModels((items) => [
+        ...items,
+        {
+          id: `${provider.prefix}/${modelName.toLowerCase().replaceAll(" ", "-")}`,
+          name: modelName,
+          upstream: modelName,
+          provider: provider.id,
+          enabled: true,
+        },
+      ]);
+    }
+
+    setModelName("");
+    setEditingModel(null);
+    setModelOpen(false);
+    notify(editingModel ? "Model updated" : "Model added");
+  }
   return (
     <Page>
       <div>
@@ -389,247 +414,256 @@ export function ProviderDetail({
           </div>
         </CardContent>
       </Card>
-      <Dialog open={providerEditOpen} onOpenChange={setProviderEditOpen}>
-        <DialogContent>
-          <form onSubmit={saveProvider}>
-            <DialogHeader>
-              <DialogTitle>Edit provider</DialogTitle>
-              <DialogDescription>Update the local mock connection details for {provider.name}.</DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-4 py-4">
-              <label className="grid gap-2 text-sm font-medium" htmlFor="edit-provider-name">Name<Input id="edit-provider-name" autoFocus value={providerDraft.name} onChange={(event) => setProviderDraft((draft) => ({ ...draft, name: event.target.value }))} /></label>
-              <label className="grid gap-2 text-sm font-medium" htmlFor="edit-provider-prefix">Gateway prefix<Input id="edit-provider-prefix" value={providerDraft.prefix} onChange={(event) => setProviderDraft((draft) => ({ ...draft, prefix: event.target.value }))} /></label>
-              <label className="grid gap-2 text-sm font-medium" htmlFor="edit-provider-base-url">Base URL<Input id="edit-provider-base-url" value={providerDraft.baseUrl} onChange={(event) => setProviderDraft((draft) => ({ ...draft, baseUrl: event.target.value }))} /></label>
-              <label className="grid gap-2 text-sm font-medium" htmlFor="edit-provider-protocol">Protocol<Input id="edit-provider-protocol" value={providerDraft.protocol} onChange={(event) => setProviderDraft((draft) => ({ ...draft, protocol: event.target.value }))} /></label>
-              <label className="flex items-center gap-3 text-sm font-medium" htmlFor="edit-provider-enabled"><Switch id="edit-provider-enabled" checked={providerDraft.enabled} onCheckedChange={(enabled) => setProviderDraft((draft) => ({ ...draft, enabled }))} />Provider enabled</label>
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setProviderEditOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={!providerDraft.name.trim() || !providerDraft.prefix.trim() || !providerDraft.protocol.trim() || !providerDraft.baseUrl.trim()}>Save provider</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <KeyRoundIcon className="size-5" />
-            <CardTitle>API keys</CardTitle>
-          </div>
-          <CardDescription>
-            Priority is fill-first: the top enabled credential receives requests
-            first.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3">
-            <div className="flex gap-2">
-              <Input
-                aria-label="New upstream API key label"
-                value={newKey}
-                onChange={(event) => setNewKey(event.target.value)}
-                placeholder="New upstream credential"
-              />
-              <Button
-                onClick={() => {
-                  if (newKey.trim()) {
-                    setKeyNames((items) => [...items, newKey]);
-                    setNewKey("");
-                    notify("Provider key added");
-                  }
-                }}
-              >
-                <PlusIcon />
-                Add key
-              </Button>
-            </div>
-            {keyNames.map((key, index) => (
-              <div
-                className="flex items-center gap-3 rounded-lg border p-3"
-                key={key}
-              >
-                <span className="w-7 text-center text-sm font-medium text-muted-foreground">
-                  {index + 1}
-                </span>
-                <span className="min-w-0 flex-1 font-medium">{key}</span>
-                <Badge variant="secondary">Enabled</Badge>
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label={`Move ${key} up`}
-                  disabled={index === 0}
-                  onClick={() =>
-                    setKeyNames((items) => {
-                      const next = [...items];
-                      [next[index - 1], next[index]] = [
-                        next[index],
-                        next[index - 1],
-                      ];
-                      return next;
-                    })
-                  }
-                >
-                  <ArrowUpIcon />
-                </Button>
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label={`Move ${key} down`}
-                  disabled={index === keyNames.length - 1}
-                  onClick={() =>
-                    setKeyNames((items) => {
-                      const next = [...items];
-                      [next[index + 1], next[index]] = [
-                        next[index],
-                        next[index + 1],
-                      ];
-                      return next;
-                    })
-                  }
-                >
-                  <ArrowDownIcon />
-                </Button>
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label={`Remove ${key}`}
-                  onClick={() =>
-                    setKeyNames((items) => items.filter((item) => item !== key))
-                  }
-                >
-                  <Trash2Icon />
-                </Button>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>Models</CardTitle>
-          <CardDescription>
-            Expose upstream models behind the {provider.prefix}/ prefix.
-          </CardDescription>
-          <CardAction>
-            <Button onClick={() => openModel()}>
-              <PlusIcon />
-              Add model
-            </Button>
-          </CardAction>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Model</TableHead>
-                <TableHead>Gateway ID</TableHead>
-                <TableHead>Upstream model</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {providerModels.map((model) => (
-                <TableRow key={model.id}>
-                  <TableCell>
-                    <span className="font-medium">{model.name}</span>
-                  </TableCell>
-                  <TableCell>
-                    <code className="text-xs">{model.id}</code>
-                  </TableCell>
-                  <TableCell>{model.upstream}</TableCell>
-                  <TableCell>
-                    <Switch
-                      checked={model.enabled}
-                      onCheckedChange={(checked) =>
-                        setModels((items) =>
-                          items.map((item) =>
-                            item.id === model.id
-                              ? { ...item, enabled: checked }
-                              : item,
-                          ),
-                        )
-                      }
-                      aria-label={`Enable ${model.name}`}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => openModel(model)}
-                    >
-                      Edit
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-      <Dialog
+      <ProviderEditDialog
+        provider={provider}
+        open={providerEditOpen}
+        onOpenChange={setProviderEditOpen}
+        draft={providerDraft}
+        setDraft={setProviderDraft}
+        onSubmit={saveProvider}
+      />
+      <ProviderApiKeys
+        keyNames={keyNames}
+        setKeyNames={setKeyNames}
+        newKey={newKey}
+        setNewKey={setNewKey}
+      />
+      <ProviderModelsCard
+        provider={provider}
+        models={providerModels}
+        setModels={setModels}
+        onOpenModel={openModel}
+      />
+      <ProviderModelDialog
         open={modelOpen}
-        onOpenChange={(open) => {
-          setModelOpen(open);
-          if (!open) setEditingModel(null);
-        }}
-      >
-        <DialogContent>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (modelName.trim()) {
-                if (editingModel) {
-                  setModels((items) =>
-                    items.map((item) =>
-                      item.id === editingModel.id
-                        ? { ...item, name: modelName, upstream: modelName }
-                        : item,
-                    ),
-                  );
-                } else {
-                  setModels((items) => [
-                    ...items,
-                    {
-                      id: `${provider.prefix}/${modelName.toLowerCase().replaceAll(" ", "-")}`,
-                      name: modelName,
-                      upstream: modelName,
-                      provider: provider.id,
-                      enabled: true,
-                    },
-                  ]);
-                }
-                setModelName("");
-                setEditingModel(null);
-                setModelOpen(false);
-                notify(editingModel ? "Model updated" : "Model added");
-              }
-            }}
-          >
-            <DialogHeader>
-              <DialogTitle>
-                {editingModel ? "Edit model" : "Add model"}
-              </DialogTitle>
-              <DialogDescription>
-                Map an upstream model to this gateway provider.
-              </DialogDescription>
-            </DialogHeader>
-            <Input
-              className="my-4"
-              autoFocus
-              value={modelName}
-              onChange={(event) => setModelName(event.target.value)}
-              placeholder="Model name"
-            />
-            <DialogFooter>
-              <Button type="submit" disabled={!modelName.trim()}>
-                {editingModel ? "Save model" : "Add model"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+        onOpenChange={setModelOpen}
+        editingModel={editingModel}
+        setEditingModel={setEditingModel}
+        modelName={modelName}
+        setModelName={setModelName}
+        onSubmit={saveModel}
+      />
     </Page>
+  );
+}
+
+type ProviderDraft = Pick<Provider, "name" | "prefix" | "protocol" | "baseUrl" | "enabled">;
+
+function ProviderEditDialog({
+  provider,
+  open,
+  onOpenChange,
+  draft,
+  setDraft,
+  onSubmit,
+}: {
+  provider: Provider;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  draft: ProviderDraft;
+  setDraft: React.Dispatch<React.SetStateAction<ProviderDraft>>;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <form onSubmit={onSubmit}>
+          <DialogHeader>
+            <DialogTitle>Edit provider</DialogTitle>
+            <DialogDescription>
+              Update the local mock connection details for {provider.name}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <label className="grid gap-2 text-sm font-medium" htmlFor="edit-provider-name">
+              Name
+              <Input id="edit-provider-name" autoFocus value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} />
+            </label>
+            <label className="grid gap-2 text-sm font-medium" htmlFor="edit-provider-prefix">
+              Gateway prefix
+              <Input id="edit-provider-prefix" value={draft.prefix} onChange={(event) => setDraft((current) => ({ ...current, prefix: event.target.value }))} />
+            </label>
+            <label className="grid gap-2 text-sm font-medium" htmlFor="edit-provider-base-url">
+              Base URL
+              <Input id="edit-provider-base-url" value={draft.baseUrl} onChange={(event) => setDraft((current) => ({ ...current, baseUrl: event.target.value }))} />
+            </label>
+            <label className="grid gap-2 text-sm font-medium" htmlFor="edit-provider-protocol">
+              Protocol
+              <Input id="edit-provider-protocol" value={draft.protocol} onChange={(event) => setDraft((current) => ({ ...current, protocol: event.target.value }))} />
+            </label>
+            <label className="flex items-center gap-3 text-sm font-medium" htmlFor="edit-provider-enabled">
+              <Switch id="edit-provider-enabled" checked={draft.enabled} onCheckedChange={(enabled) => setDraft((current) => ({ ...current, enabled }))} />
+              Provider enabled
+            </label>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button type="submit" disabled={!draft.name.trim() || !draft.prefix.trim() || !draft.protocol.trim() || !draft.baseUrl.trim()}>Save provider</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ProviderApiKeys({
+  keyNames,
+  setKeyNames,
+  newKey,
+  setNewKey,
+}: {
+  keyNames: string[];
+  setKeyNames: React.Dispatch<React.SetStateAction<string[]>>;
+  newKey: string;
+  setNewKey: React.Dispatch<React.SetStateAction<string>>;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <KeyRoundIcon className="size-5" />
+          <CardTitle>API keys</CardTitle>
+        </div>
+        <CardDescription>
+          Priority is fill-first: the top enabled credential receives requests first.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            <Input aria-label="New upstream API key label" value={newKey} onChange={(event) => setNewKey(event.target.value)} placeholder="New upstream credential" />
+            <Button
+              onClick={() => {
+                if (!newKey.trim()) return;
+                setKeyNames((items) => [...items, newKey]);
+                setNewKey("");
+                notify("Provider key added");
+              }}
+            >
+              <PlusIcon />
+              Add key
+            </Button>
+          </div>
+          {keyNames.map((key, index) => (
+            <div className="flex items-center gap-3 rounded-lg border p-3" key={key}>
+              <span className="w-7 text-center text-sm font-medium text-muted-foreground">{index + 1}</span>
+              <span className="min-w-0 flex-1 font-medium">{key}</span>
+              <Badge variant="secondary">Enabled</Badge>
+              <Button size="icon-xs" variant="ghost" aria-label={`Move ${key} up`} disabled={index === 0} onClick={() => setKeyNames((items) => moveKey(items, index, -1))}>
+                <ArrowUpIcon />
+              </Button>
+              <Button size="icon-xs" variant="ghost" aria-label={`Move ${key} down`} disabled={index === keyNames.length - 1} onClick={() => setKeyNames((items) => moveKey(items, index, 1))}>
+                <ArrowDownIcon />
+              </Button>
+              <Button size="icon-sm" variant="ghost" aria-label={`Remove ${key}`} onClick={() => setKeyNames((items) => items.filter((item) => item !== key))}>
+                <Trash2Icon />
+              </Button>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function moveKey(items: string[], index: number, distance: -1 | 1) {
+  const next = [...items];
+  const destination = index + distance;
+  [next[index], next[destination]] = [next[destination], next[index]];
+  return next;
+}
+
+function ProviderModelsCard({
+  provider,
+  models,
+  setModels,
+  onOpenModel,
+}: {
+  provider: Provider;
+  models: Model[];
+  setModels: React.Dispatch<React.SetStateAction<Model[]>>;
+  onOpenModel: (model?: Model) => void;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Models</CardTitle>
+        <CardDescription>Expose upstream models behind the {provider.prefix}/ prefix.</CardDescription>
+        <CardAction>
+          <Button onClick={() => onOpenModel()}><PlusIcon />Add model</Button>
+        </CardAction>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <DataTableHeader columns={[
+            { id: "model", label: "Model" },
+            { id: "gateway-id", label: "Gateway ID" },
+            { id: "upstream-model", label: "Upstream model" },
+            { id: "status", label: "Status" },
+            { id: "actions", label: "" },
+          ]} />
+          <TableBody>
+            {models.map((model) => (
+              <TableRow key={model.id}>
+                <TableCell><span className="font-medium">{model.name}</span></TableCell>
+                <TableCell><code className="text-xs">{model.id}</code></TableCell>
+                <TableCell>{model.upstream}</TableCell>
+                <TableCell>
+                  <Switch
+                    checked={model.enabled}
+                    onCheckedChange={(enabled) => setModels((items) => items.map((item) => item.id === model.id ? { ...item, enabled } : item))}
+                    aria-label={`Enable ${model.name}`}
+                  />
+                </TableCell>
+                <TableCell>
+                  <Button size="sm" variant="ghost" onClick={() => onOpenModel(model)}>Edit</Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ProviderModelDialog({
+  open,
+  onOpenChange,
+  editingModel,
+  setEditingModel,
+  modelName,
+  setModelName,
+  onSubmit,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  editingModel: Model | null;
+  setEditingModel: React.Dispatch<React.SetStateAction<Model | null>>;
+  modelName: string;
+  setModelName: React.Dispatch<React.SetStateAction<string>>;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        onOpenChange(nextOpen);
+        if (!nextOpen) setEditingModel(null);
+      }}
+    >
+      <DialogContent>
+        <form onSubmit={onSubmit}>
+          <DialogHeader>
+            <DialogTitle>{editingModel ? "Edit model" : "Add model"}</DialogTitle>
+            <DialogDescription>Map an upstream model to this gateway provider.</DialogDescription>
+          </DialogHeader>
+          <Input className="my-4" autoFocus value={modelName} onChange={(event) => setModelName(event.target.value)} placeholder="Model name" />
+          <DialogFooter>
+            <Button type="submit" disabled={!modelName.trim()}>{editingModel ? "Save model" : "Add model"}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

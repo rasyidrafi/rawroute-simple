@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ArrowDownIcon, ArrowUpIcon, ExternalLinkIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { Confirm, notify, Page } from "@/components/dashboard/page-ui";
+import { DataTableHeader } from "@/components/dashboard/data-table-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,7 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import type { CodexModel } from "@/mock/dashboard-data";
 
 export function CodexProviders({
@@ -56,16 +57,14 @@ export function CodexProviders({
         </CardHeader>
         <CardContent>
           <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Priority</TableHead>
-                <TableHead>Account</TableHead>
-                <TableHead>Plan</TableHead>
-                <TableHead>Quota</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead />
-              </TableRow>
-            </TableHeader>
+            <DataTableHeader columns={[
+              { id: "priority", label: "Priority" },
+              { id: "account", label: "Account" },
+              { id: "plan", label: "Plan" },
+              { id: "quota", label: "Quota" },
+              { id: "status", label: "Status" },
+              { id: "actions", label: "" },
+            ]} />
             <TableBody>
               {accounts.map((account, index) => (
                 <TableRow

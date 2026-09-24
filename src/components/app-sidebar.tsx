@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ComponentProps } from "react";
+import { useState, type ComponentProps, type Dispatch, type SetStateAction } from "react";
 import {
   ActivityIcon,
   ArrowLeftRightIcon,
@@ -352,6 +352,59 @@ export function AppSidebar({
           </SidebarMenu>
         </SidebarFooter>
       </Sidebar>
+      <WorkspaceDialogs
+        workspace={workspace}
+        workspaceDialog={workspaceDialog}
+        setWorkspaceDialog={setWorkspaceDialog}
+        workspaceName={workspaceName}
+        setWorkspaceName={setWorkspaceName}
+        deleteConfirmation={deleteConfirmation}
+        setDeleteConfirmation={setDeleteConfirmation}
+        saveWorkspace={saveWorkspace}
+        deleteWorkspace={deleteWorkspace}
+        logoutOpen={logoutOpen}
+        setLogoutOpen={setLogoutOpen}
+        loggingOut={loggingOut}
+        setLoggingOut={setLoggingOut}
+        onLogout={onLogout}
+      />
+    </>
+  );
+}
+
+function WorkspaceDialogs({
+  workspace,
+  workspaceDialog,
+  setWorkspaceDialog,
+  workspaceName,
+  setWorkspaceName,
+  deleteConfirmation,
+  setDeleteConfirmation,
+  saveWorkspace,
+  deleteWorkspace,
+  logoutOpen,
+  setLogoutOpen,
+  loggingOut,
+  setLoggingOut,
+  onLogout,
+}: {
+  workspace: Workspace;
+  workspaceDialog: "create" | "rename" | "delete" | null;
+  setWorkspaceDialog: Dispatch<SetStateAction<"create" | "rename" | "delete" | null>>;
+  workspaceName: string;
+  setWorkspaceName: Dispatch<SetStateAction<string>>;
+  deleteConfirmation: string;
+  setDeleteConfirmation: Dispatch<SetStateAction<string>>;
+  saveWorkspace: () => void;
+  deleteWorkspace: () => void;
+  logoutOpen: boolean;
+  setLogoutOpen: Dispatch<SetStateAction<boolean>>;
+  loggingOut: boolean;
+  setLoggingOut: Dispatch<SetStateAction<boolean>>;
+  onLogout: () => Promise<void>;
+}) {
+  return (
+    <>
       <Dialog
         open={workspaceDialog === "create" || workspaceDialog === "rename"}
         onOpenChange={(open) => !open && setWorkspaceDialog(null)}

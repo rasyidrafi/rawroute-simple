@@ -5,6 +5,7 @@ const result = await Bun.build({
   outdir: "./dist",
   plugins: [tailwind],
   target: "bun",
+  splitting: true,
   minify: true,
 });
 
