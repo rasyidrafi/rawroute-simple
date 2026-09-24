@@ -56,7 +56,7 @@ function applyTheme(theme: ResolvedTheme) {
   root.style.colorScheme = theme;
   document
     .querySelector('meta[name="theme-color"]')
-    ?.setAttribute("content", theme === "dark" ? "#18181b" : "#f6f5f1");
+    ?.setAttribute("content", theme === "dark" ? "#09090b" : "#f6f5f1");
 
   if (themeChanged) {
     window.requestAnimationFrame(() => {

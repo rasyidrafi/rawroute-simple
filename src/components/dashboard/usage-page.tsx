@@ -15,8 +15,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { modelMix, usageTrend } from "@/mock/dashboard-data";
 
-const trendConfig = { requests: { label: "Requests", color: "#18181b" }, cost: { label: "Cost", color: "#a16207" } } satisfies ChartConfig;
-const mixConfig = { gpt: { label: "GPT-5", color: "#18181b" }, sonnet: { label: "Sonnet", color: "#71717a" }, haiku: { label: "Haiku", color: "#a1a1aa" }, llama: { label: "Llama", color: "#d4d4d8" } } satisfies ChartConfig;
+const trendConfig = {
+  requests: { label: "Requests", color: "var(--chart-1)" },
+  cost: { label: "Cost", color: "var(--chart-cost)" },
+} satisfies ChartConfig;
+const mixConfig = {
+  gpt: { label: "GPT-5", color: "var(--chart-1)" },
+  sonnet: { label: "Sonnet", color: "var(--chart-2)" },
+  haiku: { label: "Haiku", color: "var(--chart-3)" },
+  llama: { label: "Llama", color: "var(--chart-4)" },
+} satisfies ChartConfig;
+const keyCostColors = ["var(--chart-5)", "var(--chart-2)", "var(--chart-3)"];
 
 export function Usage() {
   const [period, setPeriod] = useState("Last 7 days");
@@ -194,8 +203,8 @@ export function Usage() {
           <CardHeader><CardDescription>Concentration</CardDescription><CardTitle>Top keys by cost</CardTitle></CardHeader>
           <CardContent>
             <div className="flex min-h-0 flex-1 flex-col gap-4">
-            {topKeys.length ? <ChartContainer config={{ cost: { label: "Cost", color: "#52525b" } }} className="h-52 w-full">
-              <BarChart data={topKeys} layout="vertical" margin={{ left: 4, right: 8 }}><CartesianGrid horizontal={false} /><XAxis type="number" hide /><YAxis dataKey="name" type="category" width={116} tickLine={false} axisLine={false} /><ChartTooltip content={<ChartTooltipContent formatter={(value) => <span>${Number(value).toFixed(2)}</span>} />} /><Bar dataKey="cost" radius={8}>{topKeys.map((item, index) => <Cell key={item.name} fill={["#27272a", "#71717a", "#a1a1aa"][index]} />)}</Bar></BarChart>
+            {topKeys.length ? <ChartContainer config={{ cost: { label: "Cost", color: "var(--chart-5)" } }} className="h-52 w-full">
+              <BarChart data={topKeys} layout="vertical" margin={{ left: 4, right: 8 }}><CartesianGrid horizontal={false} /><XAxis type="number" hide /><YAxis dataKey="name" type="category" width={116} tickLine={false} axisLine={false} /><ChartTooltip content={<ChartTooltipContent formatter={(value) => <span>${Number(value).toFixed(2)}</span>} />} /><Bar dataKey="cost" radius={8}>{topKeys.map((item, index) => <Cell key={item.name} fill={keyCostColors[index]} />)}</Bar></BarChart>
             </ChartContainer> : <p className="py-8 text-center text-sm text-muted-foreground">No keys have usage in this range.</p>}
             <div className="flex flex-col gap-2">{topKeys.map((item) => <div key={item.name} className="flex items-center justify-between gap-3 rounded-lg border bg-muted/20 p-3"><div className="min-w-0"><div className="truncate text-sm font-medium">{item.name}</div><div className="text-xs text-muted-foreground">{item.requests.toLocaleString()} requests</div></div><div className="text-sm font-medium tabular-nums">${item.cost.toFixed(2)}</div></div>)}</div>
             </div>

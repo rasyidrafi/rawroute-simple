@@ -4,7 +4,13 @@ import { useId, useState, type FormEvent } from "react";
 import { LoaderCircleIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DialogFooter } from "@/components/ui/dialog";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
 import { PasswordInput } from "@/components/password-input";
 
 type PasswordChangeResponse = {
@@ -20,6 +26,37 @@ type Props = {
   logoutError?: string | null;
 };
 
+type PasswordField = "currentPassword" | "newPassword" | "confirmPassword";
+type PasswordFieldErrors = Partial<Record<PasswordField, string>>;
+
+function getPasswordFieldErrors(
+  currentPassword: string,
+  newPassword: string,
+  confirmPassword: string,
+  requireCurrentPassword: boolean,
+): PasswordFieldErrors {
+  const errors: PasswordFieldErrors = {};
+
+  if (requireCurrentPassword && !currentPassword) {
+    errors.currentPassword = "Enter your current password.";
+  }
+  if (newPassword.length < 12) {
+    errors.newPassword =
+      newPassword.length === 0
+        ? "Enter a new password."
+        : "Use at least 12 characters.";
+  } else if (newPassword.length > 128) {
+    errors.newPassword = "Use no more than 128 characters.";
+  }
+  if (!confirmPassword) {
+    errors.confirmPassword = "Confirm your new password.";
+  } else if (newPassword !== confirmPassword) {
+    errors.confirmPassword = "The passwords do not match.";
+  }
+
+  return errors;
+}
+
 export function PasswordChangeForm({
   mode = "settings",
   requireCurrentPassword = true,
@@ -34,23 +71,44 @@ export function PasswordChangeForm({
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [hasSubmitted, setHasSubmitted] = useState(false);
+  const [serverFieldErrors, setServerFieldErrors] =
+    useState<PasswordFieldErrors>({});
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [localLogoutError, setLocalLogoutError] = useState<string | null>(null);
   const isBusy = isSubmitting || isSigningOut;
   const displayedLogoutError = localLogoutError ?? logoutError;
+  const validationErrors = hasSubmitted
+    ? getPasswordFieldErrors(
+        currentPassword,
+        newPassword,
+        confirmPassword,
+        requireCurrentPassword,
+      )
+    : {};
+  const fieldErrors = {
+    currentPassword:
+      serverFieldErrors.currentPassword ?? validationErrors.currentPassword,
+    newPassword: serverFieldErrors.newPassword ?? validationErrors.newPassword,
+    confirmPassword:
+      serverFieldErrors.confirmPassword ?? validationErrors.confirmPassword,
+  };
 
   async function submitPasswordChange(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setHasSubmitted(true);
+    setServerFieldErrors({});
     setError(null);
 
-    if (newPassword.length < 12 || newPassword.length > 128) {
-      setError("The new password must be between 12 and 128 characters.");
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setError("The new passwords do not match.");
+    const validationErrors = getPasswordFieldErrors(
+      currentPassword,
+      newPassword,
+      confirmPassword,
+      requireCurrentPassword,
+    );
+    if (Object.keys(validationErrors).length > 0) {
       return;
     }
 
@@ -78,16 +136,34 @@ export function PasswordChangeForm({
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
+      setHasSubmitted(false);
+      setServerFieldErrors({});
       await onPasswordChanged();
     } catch (requestError) {
-      setError(
+      const message =
         requestError instanceof Error
           ? requestError.message
-          : "Unable to change password. Please try again.",
-      );
+          : "Unable to change password. Please try again.";
+
+      if (/^new password/i.test(message)) {
+        setServerFieldErrors({ newPassword: message });
+      } else if (/^current password/i.test(message)) {
+        setServerFieldErrors({ currentPassword: message });
+      } else {
+        setError(message);
+      }
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  function clearServerFieldError(field: PasswordField) {
+    setServerFieldErrors((currentErrors) => {
+      const nextErrors = { ...currentErrors };
+      delete nextErrors[field];
+      return nextErrors;
+    });
+    setError(null);
   }
 
   async function signOut() {
@@ -104,61 +180,99 @@ export function PasswordChangeForm({
   }
 
   return (
-    <form className="flex flex-col gap-4" onSubmit={submitPasswordChange}>
+    <form
+      className="flex flex-col gap-4"
+      noValidate
+      onSubmit={submitPasswordChange}
+    >
       <FieldGroup>
         {requireCurrentPassword && (
-          <Field>
+          <Field data-invalid={!!fieldErrors.currentPassword}>
             <FieldLabel htmlFor={currentPasswordId}>Current password</FieldLabel>
             <PasswordInput
               id={currentPasswordId}
               value={currentPassword}
-              onChange={(event) => setCurrentPassword(event.target.value)}
+              onChange={(event) => {
+                setCurrentPassword(event.target.value);
+                clearServerFieldError("currentPassword");
+              }}
               autoComplete="current-password"
               maxLength={128}
+              aria-invalid={!!fieldErrors.currentPassword}
+              aria-describedby={
+                fieldErrors.currentPassword
+                  ? `${currentPasswordId}-error`
+                  : undefined
+              }
               required
               disabled={isBusy}
             />
+            {fieldErrors.currentPassword && (
+              <FieldError id={`${currentPasswordId}-error`}>
+                {fieldErrors.currentPassword}
+              </FieldError>
+            )}
           </Field>
         )}
-        <Field>
+        <Field data-invalid={!!fieldErrors.newPassword}>
           <FieldLabel htmlFor={newPasswordId}>New password</FieldLabel>
           <PasswordInput
             id={newPasswordId}
             value={newPassword}
-            onChange={(event) => setNewPassword(event.target.value)}
+            onChange={(event) => {
+              setNewPassword(event.target.value);
+              clearServerFieldError("newPassword");
+            }}
             autoComplete="new-password"
-            minLength={12}
             maxLength={128}
+            aria-invalid={!!fieldErrors.newPassword}
+            aria-describedby={`${newPasswordId}-description${
+              fieldErrors.newPassword ? ` ${newPasswordId}-error` : ""
+            }`}
             required
             disabled={isBusy}
           />
+          <FieldDescription id={`${newPasswordId}-description`}>
+            Use 12–128 characters, without spaces or common passwords.
+          </FieldDescription>
+          {fieldErrors.newPassword && (
+            <FieldError id={`${newPasswordId}-error`}>
+              {fieldErrors.newPassword}
+            </FieldError>
+          )}
         </Field>
-        <Field>
+        <Field data-invalid={!!fieldErrors.confirmPassword}>
           <FieldLabel htmlFor={confirmPasswordId}>Confirm new password</FieldLabel>
           <PasswordInput
             id={confirmPasswordId}
             value={confirmPassword}
-            onChange={(event) => setConfirmPassword(event.target.value)}
+            onChange={(event) => {
+              setConfirmPassword(event.target.value);
+              clearServerFieldError("confirmPassword");
+            }}
             autoComplete="new-password"
-            minLength={12}
             maxLength={128}
+            aria-invalid={!!fieldErrors.confirmPassword}
+            aria-describedby={
+              fieldErrors.confirmPassword
+                ? `${confirmPasswordId}-error`
+                : undefined
+            }
             required
             disabled={isBusy}
           />
+          {fieldErrors.confirmPassword && (
+            <FieldError id={`${confirmPasswordId}-error`}>
+              {fieldErrors.confirmPassword}
+            </FieldError>
+          )}
         </Field>
       </FieldGroup>
-      <p className="text-xs text-muted-foreground">
-        Choose a password between 12 and 128 characters.
-      </p>
       {error && (
-        <p id="password-change-error" role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
+        <FieldError id="password-change-error">{error}</FieldError>
       )}
       {displayedLogoutError && (
-        <p role="alert" className="text-sm text-destructive">
-          {displayedLogoutError}
-        </p>
+        <FieldError>{displayedLogoutError}</FieldError>
       )}
       {mode === "dialog" ? (
         <DialogFooter className="mt-1 sm:justify-between">
@@ -170,19 +284,25 @@ export function PasswordChangeForm({
               disabled={isBusy}
               onClick={() => void signOut()}
             >
-              {isSigningOut ? <LoaderCircleIcon className="animate-spin" /> : null}
+              {isSigningOut ? (
+                <LoaderCircleIcon data-icon="inline-start" className="animate-spin" />
+              ) : null}
               {isSigningOut ? "Signing out..." : "Sign out"}
             </Button>
           )}
           <Button type="submit" className="w-full sm:w-auto" disabled={isBusy}>
-            {isSubmitting ? <LoaderCircleIcon className="animate-spin" /> : null}
+            {isSubmitting ? (
+              <LoaderCircleIcon data-icon="inline-start" className="animate-spin" />
+            ) : null}
             {isSubmitting ? "Changing password..." : "Change password"}
           </Button>
         </DialogFooter>
       ) : (
         <div>
           <Button type="submit" disabled={isBusy}>
-            {isSubmitting ? <LoaderCircleIcon className="animate-spin" /> : null}
+            {isSubmitting ? (
+              <LoaderCircleIcon data-icon="inline-start" className="animate-spin" />
+            ) : null}
             {isSubmitting ? "Updating password..." : "Update password"}
           </Button>
         </div>

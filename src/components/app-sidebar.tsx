@@ -212,7 +212,7 @@ export function AppSidebar({
                       size="lg"
                       tooltip={`${workspace.name} - ${app === "ai" ? "AI Gateway" : "Tool Gateway"}`}
                     >
-                    <span className="flex size-8 items-center justify-center rounded-lg bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950">
+                    <span className="flex size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
                       <RouteIcon className="size-4" />
                     </span>
                     <span className="grid flex-1 text-left text-sm leading-tight">
