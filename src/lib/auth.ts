@@ -137,14 +137,31 @@ export async function ensureDefaultPassword(): Promise<void> {
     const passwordMatches = await Bun.password.verify(password, existing.password_hash);
     if (passwordMatches || Number(existing.is_default) === 0) return;
 
-    await db.execute({
-      sql: `
-        UPDATE auth_credentials
-        SET password_hash = ?, updated_at = ?
-        WHERE id = 1 AND password_hash = ? AND is_default = 1
-      `,
-      args: [await Bun.password.hash(password), Date.now(), existing.password_hash],
-    });
+    const updatedAt = Date.now();
+    const passwordHash = await Bun.password.hash(password);
+    await db.batch(
+      [
+        {
+          sql: `
+            UPDATE auth_credentials
+            SET password_hash = ?, updated_at = ?
+            WHERE id = 1 AND password_hash = ? AND is_default = 1
+          `,
+          args: [passwordHash, updatedAt, existing.password_hash],
+        },
+        {
+          sql: `
+            DELETE FROM auth_sessions
+            WHERE EXISTS (
+              SELECT 1 FROM auth_credentials
+              WHERE id = 1 AND password_hash = ? AND updated_at = ?
+            )
+          `,
+          args: [passwordHash, updatedAt],
+        },
+      ],
+      "write",
+    );
     return;
   }
 
@@ -200,7 +217,7 @@ async function readPassword(request: BunRequest): Promise<string> {
   return body.password;
 }
 
-async function readPasswordChange(request: BunRequest): Promise<{ currentPassword: string; newPassword: string }> {
+async function readPasswordChange(request: BunRequest): Promise<{ currentPassword?: string; newPassword: string }> {
   const contentType = request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
   if (contentType !== "application/json") {
     throw new AuthError("Content-Type must be application/json.", 415);
@@ -226,14 +243,15 @@ async function readPasswordChange(request: BunRequest): Promise<{ currentPasswor
 
   if (
     !isRecord(body) ||
-    Object.keys(body).length !== 2 ||
-    typeof body.currentPassword !== "string" ||
-    typeof body.newPassword !== "string"
+    typeof body.newPassword !== "string" ||
+    Object.keys(body).some((key) => key !== "currentPassword" && key !== "newPassword") ||
+    ("currentPassword" in body && typeof body.currentPassword !== "string")
   ) {
-    throw new AuthError("Body must contain currentPassword and newPassword.", 400);
+    throw new AuthError("Body must contain newPassword and optionally currentPassword.", 400);
   }
 
-  if (body.currentPassword.length > MAX_PASSWORD_LENGTH) {
+  const currentPassword = typeof body.currentPassword === "string" ? body.currentPassword : undefined;
+  if (currentPassword !== undefined && currentPassword.length > MAX_PASSWORD_LENGTH) {
     throw new AuthError("Current password is invalid.", 400);
   }
 
@@ -253,7 +271,7 @@ async function readPasswordChange(request: BunRequest): Promise<{ currentPasswor
     );
   }
 
-  return { currentPassword: body.currentPassword, newPassword: body.newPassword };
+  return { currentPassword, newPassword: body.newPassword };
 }
 
 async function readBodyText(request: BunRequest): Promise<string> {
@@ -560,7 +578,13 @@ export async function changePassword(request: BunRequest): Promise<Response> {
     }
 
     const { currentPassword, newPassword } = await readPasswordChange(request);
-    if (!(await Bun.password.verify(currentPassword, passwordRecord.password_hash))) {
+    if (currentPassword === undefined && !currentSession.isDefaultPassword) {
+      throw new AuthError("Current password is required.", 400);
+    }
+    if (
+      currentPassword !== undefined &&
+      !(await Bun.password.verify(currentPassword, passwordRecord.password_hash))
+    ) {
       throw new AuthError("Current password is incorrect.", 401);
     }
     if (await Bun.password.verify(newPassword, passwordRecord.password_hash)) {

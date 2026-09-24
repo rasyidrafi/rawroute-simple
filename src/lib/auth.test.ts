@@ -72,12 +72,15 @@ async function login(password = DEFAULT_PASSWORD): Promise<{ token: string; resp
 
 function passwordRequest(
   sessionToken: string,
-  currentPassword: string,
+  currentPassword: string | undefined,
   newPassword: string,
   overrides: Parameters<typeof makeRequest>[1] = {},
 ): TestRequest {
   return makeRequest("/api/auth/password", {
-    body: JSON.stringify({ currentPassword, newPassword }),
+    body: JSON.stringify({
+      ...(currentPassword === undefined ? {} : { currentPassword }),
+      newPassword,
+    }),
     sessionToken,
     ...overrides,
   });
@@ -115,6 +118,30 @@ function interceptExecute(
   return () => {
     if (descriptor) Object.defineProperty(testDb, "execute", descriptor);
     else Reflect.deleteProperty(testDb, "execute");
+  };
+}
+
+function interceptBatch(
+  intercept: (statements: unknown[], run: () => Promise<unknown>) => Promise<unknown>,
+): () => void {
+  const descriptor = Object.getOwnPropertyDescriptor(testDb, "batch");
+  const original = testDb.batch;
+  const wrapped = new Proxy(original, {
+    apply(target, thisArg, args) {
+      const statements = Array.isArray(args[0]) ? args[0] : [];
+      return intercept(statements, async () => await Reflect.apply(target, thisArg, args));
+    },
+  });
+
+  Object.defineProperty(testDb, "batch", {
+    configurable: true,
+    writable: true,
+    value: wrapped,
+  });
+
+  return () => {
+    if (descriptor) Object.defineProperty(testDb, "batch", descriptor);
+    else Reflect.deleteProperty(testDb, "batch");
   };
 }
 
@@ -188,8 +215,14 @@ test("startup password synchronization cannot overwrite a concurrent rotation", 
     releaseUpdate = resolve;
   });
   let updatePaused = false;
-  const restore = interceptExecute(async (sql, run) => {
-    if (!updatePaused && sql.includes("UPDATE auth_credentials") && sql.includes("is_default = 1")) {
+  const restore = interceptBatch(async (statements, run) => {
+    if (
+      !updatePaused &&
+      statements.some((statement) => {
+        const sql = statementSql(statement);
+        return sql.includes("UPDATE auth_credentials") && sql.includes("is_default = 1");
+      })
+    ) {
       updatePaused = true;
       updateReached();
       await updateGate;
@@ -216,6 +249,30 @@ test("startup password synchronization cannot overwrite a concurrent rotation", 
 
   expect((await login()).response.status).toBe(401);
   expect((await login("A-new-stronger-password-1")).response.status).toBe(200);
+});
+
+test("configured default rotation revokes sessions issued for the previous default", async () => {
+  const previousDefaultPassword = "PreviousDefaultPassword!123";
+  await testDb.execute({
+    sql: "UPDATE auth_credentials SET password_hash = ?, is_default = 1, updated_at = ? WHERE id = 1",
+    args: [await Bun.password.hash(previousDefaultPassword), Date.now()],
+  });
+  const oldSession = await login(previousDefaultPassword);
+  expect(oldSession.response.status).toBe(200);
+
+  await auth.ensureDefaultPassword();
+
+  const status = await responseBody(await auth.status(makeRequest("/api/auth/status", {
+    sessionToken: oldSession.token,
+  })));
+  expect(status).toMatchObject({ authenticated: false, isDefaultPassword: true });
+
+  const changed = await auth.changePassword(
+    passwordRequest(oldSession.token, undefined, "A-new-stronger-password-1"),
+  );
+  expect(changed.status).toBe(401);
+  expect((await login(previousDefaultPassword)).response.status).toBe(401);
+  expect((await login()).response.status).toBe(200);
 });
 
 test("management gate reads session and default state from one snapshot during rotation", async () => {
@@ -348,6 +405,23 @@ test("password rotation revokes every session and survives default-password init
   expect(management.status).toBe(200);
 });
 
+test("initial default-password change does not require submitting the current password", async () => {
+  const session = await login();
+  const newPassword = "A-new-stronger-password-1";
+  const request = passwordRequest(session.token, undefined, newPassword);
+  const changed = await auth.changePassword(request);
+
+  expect(changed.status).toBe(200);
+  expect(await responseBody(changed)).toEqual({
+    success: true,
+    authenticated: false,
+    requiresLogin: true,
+  });
+  expect(request.sessionWasCleared()).toBe(true);
+  expect((await login()).response.status).toBe(401);
+  expect((await login(newPassword)).response.status).toBe(200);
+});
+
 test("password can be rotated again after the initial forced change", async () => {
   const initialSession = await login();
   const firstPassword = "A-new-stronger-password-1";
@@ -358,6 +432,12 @@ test("password can be rotated again after the initial forced change", async () =
 
   const secondSession = await login(firstPassword);
   const secondPassword = "Another-strong-password-2";
+  const missingCurrentPassword = await auth.changePassword(
+    passwordRequest(secondSession.token, undefined, secondPassword),
+  );
+  expect(missingCurrentPassword.status).toBe(400);
+  expect((await responseBody(missingCurrentPassword)).error).toBe("Current password is required.");
+
   const secondChange = await auth.changePassword(
     passwordRequest(secondSession.token, firstPassword, secondPassword),
   );
