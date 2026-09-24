@@ -1,55 +1,34 @@
 # Repository guidance
 
-## Shape and ownership
+## Runtime and ownership
 
-- This repository is a Bun fullstack React app.
-- `src/index.ts` owns the Bun server, HTML import, and API routes on port `3001`.
-- `src/index.html` is the browser entry document and `src/frontend.tsx` mounts the React application.
-- `src/App.tsx` is the client demo. It fetches `/api/hello` from the same Bun server.
-- `src/index.css` contains the application styles. Build output is written to ignored `dist/`.
+- This is a single-package Bun/React app; do not add another bundler or backend runtime. `src/index.ts` imports `src/index.html` and owns the Bun server, API routes, and CLIProxy startup/shutdown. The browser entry is `src/index.html` → `src/frontend.tsx` → `src/App.tsx`.
+- Keep API routes in `src/index.ts` and browser auth/UI behavior in `src/App.tsx` and feature components. Docker builds `dist/` and runs `bun index.js` from there; `bun run start` runs source and is not the container entrypoint.
+- `src/components/dashboard/views.tsx` dispatches pages and owns mock collections shared across pages. Keep shared provider/model/routing/pricing state there so edits survive navigation; page-local dialogs and drafts belong in their page modules.
+- `src/lib/cliproxy/index.ts` is the public CLIProxy API. `service.ts` coordinates lifecycle/locking/recovery; `store.ts` owns persisted state/config; `process-ownership.ts` inspects `/proc` without signaling; `version-store.ts` manages version staging/current links; `http.ts` handles routes/admission; `release.ts` downloads and verifies binaries.
+- UI components are source-owned under `src/components/ui/`; `components.json` configures shadcn `base-nova` / Base UI, Tailwind v4, and Lucide. Reuse these components and consult the shadcn skill before adding or changing UI primitives.
+- For Bun-specific API questions, use the `ask-bun` skill before external documentation.
 
-## Skills
+## Environment and persistence
 
-- Use the `ask-bun` skill for questions related to Bun (Prefer this first before fetching resources).
+- Bun loads `.env`; copy `.env.example` and set `AUTH_DEFAULT_PASSWORD` before starting the app. Development defaults to `file:./dev.db`; production requires `DATABASE_URL` and `APP_ORIGIN` (see `src/lib/env.ts`).
+- `RAWROUTE_DATA_DIR` defaults to `~/.local/share/rawroute`; Docker Compose mounts `/data` and stores the database at `/data/rawroute.db` and CLIProxy state at `/data/cliproxy`. Keep `.env*` (except `.env.example`), `dev.db`, `dist/`, and `node_modules/` out of commits.
+- `src/index.ts` coordinates SIGINT/SIGTERM: it stops accepting CLIProxy mutations, drains initialization/mutations, shuts down CLIProxy, then stops the HTTP server. Preserve this order when changing shutdown behavior.
 
 ## Commands
 
-Run root commands with Bun:
-
 ```bash
 bun install
-bun run dev                 # Bun HMR server, http://127.0.0.1:3001
-bun run build               # production Bun bundle in ignored dist/
-bun run start               # production server
+bun run dev                 # HMR server; default port 3001
+bun run build               # Bun.build + Tailwind; output in ignored dist/
+bun run start               # source server with NODE_ENV=production
+bun run lint                # oxlint + @shadcn/lint (no-restyle is a warning)
+bunx tsc --noEmit           # strict typecheck; build does not typecheck
+bun test                    # all Bun tests
+bun test src/lib/auth.test.ts
+bun test src/lib/cliproxy
+bun test src/lib/cliproxy/service.test.ts
 ```
 
-Focused checks:
-
-```bash
-curl --fail http://127.0.0.1:3001/api/health
-curl --fail http://127.0.0.1:3001/api/hello
-```
-
-There are no root test or lint scripts. The build is the reliable application verification command.
-
-## Preview tunnels
-
-- `bun run dev:preview` runs the HMR server plus a Cloudflare Quick Tunnel.
-- `bun run preview` builds first, then runs the production server plus a Quick Tunnel.
-- Both scripts require `curl` and `cloudflared`, use port `3001` by default, wait on `/api/health`, and rewrite the origin Host header with `--http-host-header` for Bun dev-server compatibility.
-- Set `PORT` to change the app port. The preview scripts do not require browser-specific environment variables.
-
-## Change workflow
-
-- Keep server routes in `src/index.ts` and browser behavior in `src/App.tsx`.
-- Use Bun's HTML import and `Bun.serve`; do not add another frontend bundler or backend runtime.
-- Keep `.env*`, `dist/`, and `node_modules/` local and out of commits.
-
-## Reference resources
-
-- Bun React guide: https://bun.sh/guides/ecosystem/react
-- Bun fullstack server: https://bun.sh/docs/bundler/fullstack
-- Bun HTML/static bundling: https://bun.sh/docs/bundler/html-static
-- Bun runtime environment variables: https://bun.sh/docs/runtime/env
-- Bun bundler: https://bun.sh/docs/bundler
-- Cloudflare Quick Tunnels: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/
+- CLIProxy lifecycle tests use Linux `/proc`, compiled child-process fixtures, and port `8317`; keep that port free and do not run concurrent copies of the suite.
+- `bun run dev:preview` starts HMR plus a Cloudflare Quick Tunnel; `bun run preview` builds first and uses `curl` plus `cloudflared`. Both default to port `3001`; set `PORT` to change it.

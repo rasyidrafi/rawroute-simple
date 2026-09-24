@@ -3,8 +3,33 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" type="image/svg+xml" href="./logo.svg" />
     <meta name="theme-color" content="#f6f5f1" />
+    <script>
+      (() => {
+        const root = document.documentElement;
+        let storedTheme = null;
+
+        try {
+          storedTheme = window.localStorage.getItem("rawroute-theme");
+          if (!["light", "dark", "system"].includes(storedTheme)) {
+            if (storedTheme !== null) window.localStorage.removeItem("rawroute-theme");
+            storedTheme = null;
+          }
+        } catch {
+          storedTheme = null;
+        }
+
+        const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        const isDark = storedTheme === "dark" || (storedTheme !== "light" && prefersDark);
+        root.classList.remove("light", "dark");
+        root.classList.add(isDark ? "dark" : "light");
+        root.style.colorScheme = isDark ? "dark" : "light";
+        document
+          .querySelector('meta[name="theme-color"]')
+          ?.setAttribute("content", isDark ? "#18181b" : "#f6f5f1");
+      })();
+    </script>
+    <link rel="icon" type="image/svg+xml" href="./logo.svg" />
     <title>RawRoute</title>
   </head>
   <body>

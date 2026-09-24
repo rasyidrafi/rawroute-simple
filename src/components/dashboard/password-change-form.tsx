@@ -14,6 +14,7 @@ type PasswordChangeResponse = {
 
 type Props = {
   mode?: "dialog" | "settings";
+  requireCurrentPassword?: boolean;
   onPasswordChanged: () => void | Promise<void>;
   onLogout?: () => Promise<void>;
   logoutError?: string | null;
@@ -21,6 +22,7 @@ type Props = {
 
 export function PasswordChangeForm({
   mode = "settings",
+  requireCurrentPassword = true,
   onPasswordChanged,
   onLogout,
   logoutError,
@@ -58,7 +60,10 @@ export function PasswordChangeForm({
         method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ currentPassword, newPassword }),
+        body: JSON.stringify({
+          ...(requireCurrentPassword ? { currentPassword } : {}),
+          newPassword,
+        }),
       });
       const payload = (await response.json().catch(() => null)) as
         | PasswordChangeResponse
@@ -101,18 +106,20 @@ export function PasswordChangeForm({
   return (
     <form className="flex flex-col gap-4" onSubmit={submitPasswordChange}>
       <FieldGroup>
-        <Field>
-          <FieldLabel htmlFor={currentPasswordId}>Current password</FieldLabel>
-          <PasswordInput
-            id={currentPasswordId}
-            value={currentPassword}
-            onChange={(event) => setCurrentPassword(event.target.value)}
-            autoComplete="current-password"
-            maxLength={128}
-            required
-            disabled={isBusy}
-          />
-        </Field>
+        {requireCurrentPassword && (
+          <Field>
+            <FieldLabel htmlFor={currentPasswordId}>Current password</FieldLabel>
+            <PasswordInput
+              id={currentPasswordId}
+              value={currentPassword}
+              onChange={(event) => setCurrentPassword(event.target.value)}
+              autoComplete="current-password"
+              maxLength={128}
+              required
+              disabled={isBusy}
+            />
+          </Field>
+        )}
         <Field>
           <FieldLabel htmlFor={newPasswordId}>New password</FieldLabel>
           <PasswordInput

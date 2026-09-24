@@ -1,11 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { ThemeProvider, useTheme } from "next-themes";
-import { MoonIcon, SunIcon } from "lucide-react";
 import { AppSidebar, type DashboardRoute } from "@/components/app-sidebar";
 import { PasswordChangeForm } from "@/components/dashboard/password-change-form";
 import { DashboardViews } from "@/components/dashboard/views";
+import { ThemeToggle } from "@/components/theme-toggle";
 import {
   Dialog,
   DialogContent,
@@ -53,17 +52,15 @@ export function DashboardShell({
   logoutError?: string | null;
 }) {
   return (
-    <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
-      <TooltipProvider>
-        <DashboardContent
-          onLogout={onLogout}
-          onPasswordChanged={onPasswordChanged}
-          isDefaultPassword={isDefaultPassword}
-          logoutError={logoutError}
-        />
-        <Toaster />
-      </TooltipProvider>
-    </ThemeProvider>
+    <TooltipProvider>
+      <DashboardContent
+        onLogout={onLogout}
+        onPasswordChanged={onPasswordChanged}
+        isDefaultPassword={isDefaultPassword}
+        logoutError={logoutError}
+      />
+      <Toaster />
+    </TooltipProvider>
   );
 }
 
@@ -82,7 +79,6 @@ function DashboardContent({
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(
     null,
   );
-  const { resolvedTheme, setTheme } = useTheme();
   const toolRoute = route.startsWith("tool-");
 
   function navigate(nextRoute: DashboardRoute) {
@@ -117,20 +113,7 @@ function DashboardContent({
                     titles[route]
                   )}
                 </h1>
-                <button
-                  type="button"
-                  className="ml-auto inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  aria-label="Toggle theme"
-                  onClick={() =>
-                    setTheme(resolvedTheme === "dark" ? "light" : "dark")
-                  }
-                >
-                  {resolvedTheme === "dark" ? (
-                    <SunIcon className="size-4" />
-                  ) : (
-                    <MoonIcon className="size-4" />
-                  )}
-                </button>
+                <ThemeToggle className="ml-auto" />
               </div>
             </header>
             <DashboardViews
@@ -157,6 +140,7 @@ function DashboardContent({
           </DialogHeader>
           <PasswordChangeForm
             mode="dialog"
+            requireCurrentPassword={!isDefaultPassword}
             onPasswordChanged={onPasswordChanged}
             onLogout={onLogout}
             logoutError={logoutError}

@@ -83,6 +83,11 @@
   }
 }
 
+.theme-change-no-transition,
+.theme-change-no-transition * {
+  transition: none !important;
+}
+
 .dark {
   --background: #18181b;
   --foreground: #fafafa;
