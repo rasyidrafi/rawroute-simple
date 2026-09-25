@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, type ComponentProps, type Dispatch, type SetStateAction } from "react";
+import { Link, useLocation } from "react-router";
+import { dashboardPaths, type DashboardRoute } from "@/lib/dashboard-routes";
 import {
   ActivityIcon,
   ArrowLeftRightIcon,
@@ -68,24 +70,6 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 
-export type DashboardRoute =
-  | "endpoint"
-  | "providers"
-  | "codex"
-  | "routing"
-  | "usage"
-  | "budgets"
-  | "pricing"
-  | "logs"
-  | "cliproxy"
-  | "settings"
-  | "tool-overview"
-  | "tool-tools"
-  | "tool-connections"
-  | "tool-policies"
-  | "tool-activity"
-  | "tool-settings";
-
 type Item = { route: DashboardRoute; title: string; icon: LucideIcon };
 type Group = { label: string; items: Item[] };
 
@@ -129,6 +113,7 @@ const toolGroups: Group[] = [
       { route: "tool-settings", title: "Settings", icon: SettingsIcon },
     ],
   },
+  aiGroups[2],
 ];
 
 type Workspace = { id: string; name: string; default?: boolean };
@@ -144,9 +129,8 @@ export function AppSidebar({
   onLogout: () => Promise<void>;
 }) {
   const { isMobile, setOpenMobile } = useSidebar();
-  const [app, setApp] = useState<"ai" | "tool">(
-    route.startsWith("tool-") ? "tool" : "ai",
-  );
+  const location = useLocation();
+  const app = location.pathname.startsWith("/dashboard/tools/") ? "tool" : "ai";
   const [workspaces, setWorkspaces] = useState<Workspace[]>([
     { id: "default", name: "Default", default: true },
     { id: "growth", name: "Growth Lab" },
@@ -164,7 +148,6 @@ export function AppSidebar({
   const groups = app === "ai" ? aiGroups : toolGroups;
 
   function navigate(next: DashboardRoute) {
-    setApp(next.startsWith("tool-") ? "tool" : "ai");
     onNavigate(next);
     if (isMobile) setOpenMobile(false);
   }
@@ -325,8 +308,8 @@ export function AppSidebar({
                     <SidebarMenuItem key={item.route}>
                       <SidebarMenuButton
                         tooltip={item.title}
-                        isActive={route === item.route}
-                        onClick={() => navigate(item.route)}
+                         isActive={route === item.route}
+                         render={<Link to={dashboardPaths[item.route]} onClick={() => { if (isMobile) setOpenMobile(false); }} />}
                       >
                         <item.icon />
                         <span>{item.title}</span>

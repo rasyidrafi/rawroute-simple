@@ -20,6 +20,7 @@ import { env } from "./lib/env";
 import { clearLogs, readLogs, reportBrowserEvent } from "./lib/logging/http";
 import { loggedGateway, loggedRequest } from "./lib/logging/request";
 import { logs } from "./lib/logging/store";
+import { dashboardAliases, dashboardPage, dashboardPaths } from "./lib/dashboard-routes";
 
 // All new API handlers should use this registration helper. Polling endpoints
 // log failures only so watching the dashboard does not flood the console.
@@ -33,7 +34,8 @@ await ensureDefaultPassword();
 const server = serve({
   port: env.port,
   routes: {
-    "/": index,
+    "/": { GET: (request) => Response.redirect(new URL(dashboardPaths.endpoint, request.url), 302) },
+    ...Object.fromEntries([...Object.values(dashboardPaths), "/dashboard/ai/providers/:providerId"].map((path) => [path, { GET: index }])),
     "/api/health": { GET: () => Response.json({
       ok: true,
       service: "bun-react",
@@ -74,6 +76,17 @@ const server = serve({
     "/api/hello": {
       GET: () => Response.json({ message: "Hello from Bun and React" }),
     },
+  },
+  fetch(request) {
+    const path = new URL(request.url).pathname;
+    if (dashboardAliases.includes(path as typeof dashboardAliases[number])) {
+      const destination = path === "/dashboard/tools" ? dashboardPaths["tool-overview"] : dashboardPaths.endpoint;
+      return request.method === "GET" || request.method === "HEAD"
+        ? Response.redirect(new URL(destination, request.url), 302)
+        : Response.json({ error: "Method not allowed" }, { status: 405 });
+    }
+    if (dashboardPage(path)) return Response.json({ error: "Method not allowed" }, { status: 405 });
+    return Response.json({ error: "Not found" }, { status: 404 });
   },
   development: { hmr: true, console: true },
 });

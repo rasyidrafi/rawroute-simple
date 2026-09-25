@@ -13,7 +13,8 @@ import {
   Settings2Icon,
   Trash2Icon,
 } from "lucide-react";
-import { type DashboardRoute } from "@/components/app-sidebar";
+import { dashboardPaths } from "@/lib/dashboard-routes";
+import { Link } from "react-router";
 import { Confirm, Metadata, notify, Page } from "@/components/dashboard/page-ui";
 import { DataTableHeader } from "@/components/dashboard/data-table-header";
 import { Badge } from "@/components/ui/badge";
@@ -47,13 +48,9 @@ import type { Model, Provider } from "@/mock/dashboard-data";
 export function Providers({
   providers,
   setProviders,
-  onSelect,
-  onNavigate,
 }: {
   providers: Provider[];
   setProviders: React.Dispatch<React.SetStateAction<Provider[]>>;
-  onSelect: (provider: Provider) => void;
-  onNavigate: (route: DashboardRoute) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Provider | null>(null);
@@ -124,10 +121,9 @@ export function Providers({
                 <TableRow
                   key={provider.id}
                   className="cursor-pointer"
-                  onClick={() => onSelect(provider)}
                 >
                   <TableCell>
-                    <span className="font-medium">{provider.name}</span>
+                    <Link className="font-medium" to={`${dashboardPaths.providers}/${encodeURIComponent(provider.id)}`}>{provider.name}</Link>
                     {!provider.enabled && <Badge className="ml-2" variant="outline">Disabled</Badge>}
                   </TableCell>
                   <TableCell>
@@ -162,8 +158,9 @@ export function Providers({
                       <Button
                         size="icon-sm"
                         variant="ghost"
-                        aria-label={`Open ${provider.name}`}
-                        onClick={() => onSelect(provider)}
+                         aria-label={`Open ${provider.name}`}
+                         nativeButton={false}
+                         render={<Link to={`${dashboardPaths.providers}/${encodeURIComponent(provider.id)}`} />}
                       >
                         <ChevronRightIcon />
                       </Button>
@@ -196,15 +193,15 @@ export function Providers({
               { id: "actions", label: "" },
             ]} />
             <TableBody>
-              <TableRow className="cursor-pointer" onClick={() => onNavigate("codex")}>
-                <TableCell><span className="font-medium">Codex Providers</span></TableCell>
+              <TableRow>
+                <TableCell><Link className="font-medium" to={dashboardPaths.codex}>Codex Providers</Link></TableCell>
                 <TableCell><Badge variant="secondary">codex/</Badge></TableCell>
                 <TableCell>OpenAI Responses</TableCell>
                 <TableCell><span className="font-medium tabular-nums">2</span><span className="ml-2 text-xs text-muted-foreground">demo accounts</span></TableCell>
                 <TableCell><span className="font-medium tabular-nums">3</span><span className="ml-2 text-xs text-muted-foreground">built-in</span></TableCell>
                 <TableCell onClick={(event) => event.stopPropagation()}>
                   <div className="flex justify-end">
-                    <Button size="icon-sm" variant="ghost" aria-label="Open Codex Providers" onClick={() => onNavigate("codex")}>
+                    <Button size="icon-sm" variant="ghost" aria-label="Open Codex Providers" nativeButton={false} render={<Link to={dashboardPaths.codex} />}>
                       <ChevronRightIcon />
                     </Button>
                   </div>
@@ -282,13 +279,11 @@ export function Providers({
 
 export function ProviderDetail({
   provider,
-  setProvider,
   setProviders,
   models,
   setModels,
 }: {
   provider: Provider;
-  setProvider: (provider: Provider | null) => void;
   setProviders: React.Dispatch<React.SetStateAction<Provider[]>>;
   models: Model[];
   setModels: React.Dispatch<React.SetStateAction<Model[]>>;
@@ -339,7 +334,6 @@ export function ProviderDetail({
     };
     if (!updatedProvider.name || !updatedProvider.prefix || !updatedProvider.baseUrl || !updatedProvider.protocol) return;
     setProviders((items) => items.map((item) => item.id === provider.id ? updatedProvider : item));
-    setProvider(updatedProvider);
     setProviderEditOpen(false);
     notify("Provider updated");
   }
@@ -379,8 +373,9 @@ export function ProviderDetail({
         <Button
           size="sm"
           variant="ghost"
-          className="-ml-3"
-          onClick={() => setProvider(null)}
+           className="-ml-3"
+           nativeButton={false}
+           render={<Link to={dashboardPaths.providers} />}
         >
           <ArrowLeftIcon />
           Providers

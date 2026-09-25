@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+import { useLocation, useNavigate } from "react-router";
 import { reportEvent } from "@/lib/logging/client";
-import { AppSidebar, type DashboardRoute } from "@/components/app-sidebar";
+import { AppSidebar } from "@/components/app-sidebar";
+import { dashboardPage, dashboardPaths, providerIdFromPath, type DashboardRoute } from "@/lib/dashboard-routes";
 import { PasswordChangeForm } from "@/components/dashboard/password-change-form";
 import { DashboardViews } from "@/components/dashboard/views";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -20,7 +22,6 @@ import {
 } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import type { Provider } from "@/mock/dashboard-data";
 
 const titles: Record<DashboardRoute, string> = {
   endpoint: "Endpoint & Key",
@@ -76,11 +77,16 @@ function DashboardContent({
   isDefaultPassword: boolean;
   logoutError?: string | null;
 }) {
-  const [route, setRoute] = useState<DashboardRoute>("endpoint");
-  const [selectedProvider, setSelectedProvider] = useState<Provider | null>(
-    null,
-  );
+  const location = useLocation();
+  const navigateTo = useNavigate();
+  const page = dashboardPage(location.pathname);
+  const route: DashboardRoute = page === "provider-detail" ? "providers" : page ?? "endpoint";
+  const providerId = page === "provider-detail" ? providerIdFromPath(location.pathname) : undefined;
   const toolRoute = route.startsWith("tool-");
+
+  useEffect(() => {
+    if (page) reportEvent("dashboard.navigation", { page: route });
+  }, [location.pathname, page, route]);
 
   useEffect(() => {
     if (isDefaultPassword) return;
@@ -95,9 +101,7 @@ function DashboardContent({
   }, [isDefaultPassword]);
 
   function navigate(nextRoute: DashboardRoute) {
-    if (nextRoute !== route) reportEvent("dashboard.navigation", { page: nextRoute });
-    if (nextRoute === "providers") setSelectedProvider(null);
-    setRoute(nextRoute);
+    navigateTo(dashboardPaths[nextRoute]);
   }
 
   return (
@@ -133,8 +137,8 @@ function DashboardContent({
             <DashboardViews
               route={route}
               onNavigate={navigate}
-              selectedProvider={selectedProvider}
-              onSelectProvider={setSelectedProvider}
+              providerId={providerId}
+              providerDetail={page === "provider-detail"}
               onPasswordChanged={onPasswordChanged}
             />
           </div>

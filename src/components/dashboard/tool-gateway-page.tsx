@@ -1,7 +1,8 @@
 "use client";
 
 import { WrenchIcon } from "lucide-react";
-import type { DashboardRoute } from "@/components/app-sidebar";
+import { dashboardPaths, type DashboardRoute } from "@/lib/dashboard-routes";
+import { Link } from "react-router";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -16,7 +17,7 @@ type Props = {
   onNavigate: (route: DashboardRoute) => void;
 };
 
-export function ToolGateway({ route, onNavigate }: Props) {
+export function ToolGateway({ route }: Props) {
   const page = route.replace("tool-", "") as
     "overview" | "tools" | "connections" | "policies" | "activity" | "settings";
   const pageCopy: Record<
@@ -87,11 +88,10 @@ export function ToolGateway({ route, onNavigate }: Props) {
           <CardContent>
             <div className="grid gap-3 sm:grid-cols-2">
               {navigation.map((item) => (
-                <button
+                <Link
                   key={item}
-                  type="button"
+                  to={dashboardPaths[`tool-${item}` as DashboardRoute]}
                   className="rounded-lg border bg-muted/20 p-4 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  onClick={() => onNavigate(`tool-${item}` as DashboardRoute)}
                 >
                   <span className="flex items-center gap-2 font-medium">
                     <WrenchIcon className="size-4" />
@@ -100,7 +100,7 @@ export function ToolGateway({ route, onNavigate }: Props) {
                   <span className="mt-1 block text-sm text-muted-foreground">
                   Open the local mock page; no Executor data is connected.
                   </span>
-                </button>
+                </Link>
               ))}
             </div>
           </CardContent>

@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { BrowserRouter } from "react-router";
 import { LoginForm } from "@/components/login-form";
 import { DashboardShell } from "@/components/dashboard/dashboard-shell";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -14,6 +15,10 @@ type AuthResponse = {
 type HelloResponse = { message: string };
 
 export function App() {
+  return <BrowserRouter><AuthenticatedApp /></BrowserRouter>;
+}
+
+function AuthenticatedApp() {
   const [serviceMessage, setServiceMessage] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isDefaultPassword, setIsDefaultPassword] = useState(false);

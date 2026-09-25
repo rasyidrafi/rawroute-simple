@@ -24,7 +24,7 @@ bun install
 bun run dev                 # HMR server; default port 3001
 bun run build               # Bun.build + Tailwind; output in ignored dist/
 bun run start               # source server with NODE_ENV=production
-bun run lint                # oxlint + @shadcn/lint (no-restyle is a warning)
+bun run lint                # oxlint, then React Doctor (no-restyle is a warning)
 bunx tsc --noEmit           # strict typecheck; build does not typecheck
 bun run doctor             # React diagnostics; exceptions in doctor.config.json
 bun test                    # all Bun tests

@@ -1,8 +1,9 @@
 "use client";
 
 import { lazy, Suspense } from "react";
+import { Link } from "react-router";
 import { useLoggedState } from "@/hooks/use-logged-state";
-import { type DashboardRoute } from "@/components/app-sidebar";
+import { dashboardPaths, type DashboardRoute } from "@/lib/dashboard-routes";
 import { Budgets } from "@/components/dashboard/budgets-page";
 import { CliproxyPage } from "@/components/dashboard/cliproxy-page";
 import { CodexProviders } from "@/components/dashboard/codex-page";
@@ -14,7 +15,6 @@ import { Routing } from "@/components/dashboard/routing-page";
 import { Settings } from "@/components/dashboard/settings-page";
 import { ToolGateway } from "@/components/dashboard/tool-gateway-page";
 import {
-  type Provider,
   initialAliases,
   initialBudgets,
   initialCombos,
@@ -34,16 +34,16 @@ const Usage = lazy(() =>
 type Props = {
   route: DashboardRoute;
   onNavigate: (route: DashboardRoute) => void;
-  selectedProvider: Provider | null;
-  onSelectProvider: (provider: Provider | null) => void;
+  providerId?: string;
+  providerDetail: boolean;
   onPasswordChanged: () => void | Promise<void>;
 };
 
 export function DashboardViews({
   route,
   onNavigate,
-  selectedProvider,
-  onSelectProvider,
+  providerId,
+  providerDetail,
   onPasswordChanged,
 }: Props) {
   const keys = initialGatewayKeys;
@@ -58,20 +58,18 @@ export function DashboardViews({
   if (route === "endpoint") return <EndpointKeys />;
   if (route === "cliproxy") return <CliproxyPage />;
   if (route === "providers")
-    return selectedProvider ? (
+    return providerDetail ? (providers.find((provider) => provider.id === providerId) ? (
       <ProviderDetail
-        provider={selectedProvider}
-        setProvider={onSelectProvider}
+        key={providerId}
+        provider={providers.find((provider) => provider.id === providerId)!}
         setProviders={setProviders}
         models={models}
         setModels={setModels}
-      />
+      />) : <main className="flex-1 p-6"><h2 className="text-xl font-semibold">Provider not found</h2><Link to={dashboardPaths.providers}>Back to providers</Link></main>
     ) : (
       <Providers
         providers={providers}
         setProviders={setProviders}
-        onSelect={onSelectProvider}
-        onNavigate={onNavigate}
       />
     );
   if (route === "codex")
