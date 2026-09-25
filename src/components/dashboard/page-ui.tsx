@@ -1,6 +1,7 @@
 "use client";
 
 import { toast } from "@/components/ui/toast";
+import { reportEvent } from "@/lib/logging/client";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -12,9 +13,18 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-export function copy(value: string, label = "Copied") {
-  void navigator.clipboard?.writeText(value).catch(() => undefined);
-  toast.add({ title: label, type: "success" });
+export async function copy(value: string, label = "Copied") {
+  try {
+    if (!navigator.clipboard) throw new Error("Clipboard unavailable");
+    await navigator.clipboard.writeText(value);
+    toast.add({ title: label, type: "success" });
+    reportEvent("dashboard.copy");
+    return true;
+  } catch {
+    toast.add({ title: "Clipboard access failed. Please try again.", type: "error" });
+    reportEvent("dashboard.copy-failed");
+    return false;
+  }
 }
 
 export function notify(message: string, type: "success" | "info" | "error" = "success") {

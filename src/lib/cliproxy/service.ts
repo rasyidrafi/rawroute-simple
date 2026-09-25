@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import { logs } from "../logging/store";
 import * as path from "node:path";
 import * as lockfile from "proper-lockfile";
 import {
@@ -374,11 +375,15 @@ function currentOperation(): CliproxyOperation | null {
 
 async function withOperation<T>(name: CliproxyOperationName, callback: () => Promise<T>): Promise<T> {
   const operation: CliproxyOperation = { name, startedAt: new Date().toISOString() };
+  logs.record({ source: "cliproxy", event: `cliproxy.${name}.started`, message: `CLIProxy ${name} started` });
   operationQueue.push(operation);
   lastError = null;
   try {
-    return await callback();
+    const result = await callback();
+    logs.record({ source: "cliproxy", event: `cliproxy.${name}.completed`, message: `CLIProxy ${name} completed` });
+    return result;
   } catch (error) {
+    logs.record({ source: "cliproxy", event: `cliproxy.${name}.failed`, message: `CLIProxy ${name} failed` }, "ERROR");
     lastError = error instanceof Error ? error.message : "CLIProxy operation failed";
     throw error;
   } finally {
@@ -542,6 +547,7 @@ async function scheduleRestart(
     return;
   }
   const operation: CliproxyOperation = { name: "restarting", startedAt: new Date().toISOString() };
+  logs.record({ source: "cliproxy", event: "cliproxy.process.exited", message: "CLIProxy exited unexpectedly; recovery scheduled" }, "WARN", { exitCode });
   operationQueue.push(operation);
   restartTask = (async () => {
     const uptime = Date.now() - Date.parse(exitedRecord.startedAt);
@@ -568,12 +574,15 @@ async function scheduleRestart(
           attemptedStart = true;
           await startCurrentVersion();
         });
+        if (activeProcess) logs.record({ source: "cliproxy", event: "cliproxy.recovery.completed", message: "CLIProxy automatic recovery completed" });
         if (!attemptedStart || activeProcess) return;
       } catch (error) {
+        logs.record({ source: "cliproxy", event: "cliproxy.recovery.failed", message: "CLIProxy automatic recovery attempt failed" }, "ERROR", { attempt: restartAttempts });
         lastError = error instanceof Error ? error.message : "CLIProxy restart failed";
       }
     }
     if (restartAttempts >= MAX_RESTARTS && !activeProcess) {
+      logs.record({ source: "cliproxy", event: "cliproxy.recovery.exhausted", message: "CLIProxy automatic recovery limit reached" }, "ERROR");
       lastError = `CLIProxy exited with code ${exitCode}; restart limit reached`;
     }
   })().finally(() => {

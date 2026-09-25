@@ -1,0 +1,95 @@
+import type { BunRequest } from "bun";
+import { getCurrentSession } from "../auth";
+import { env } from "../env";
+import { logs } from "./store";
+import { browserEvents, dashboardPages, type BrowserEvent, type LogDetails } from "./types";
+
+function json(body: unknown, status = 200): Response {
+  return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
+}
+
+async function authorize(request: BunRequest, mutate: boolean): Promise<Response | null> {
+  const expected = env.nodeEnv === "production" ? env.appOrigin : new URL(request.url).origin;
+  const origin = request.headers.get("origin");
+  if (request.headers.get("sec-fetch-site") === "cross-site" || (origin !== null && origin !== expected) || (mutate && origin !== expected)) {
+    return json({ error: "Invalid or missing request origin." }, 403);
+  }
+  const session = await getCurrentSession(request);
+  if (!session) return json({ error: "Sign in to access console logs." }, 401);
+  if (session.isDefaultPassword) return json({ error: "Change password required." }, 403);
+  return null;
+}
+
+async function guarded(request: BunRequest, mutate: boolean, action: () => Response | Promise<Response>): Promise<Response> {
+  try { return await authorize(request, mutate) ?? await action(); }
+  catch { return json({ error: "Console logs are temporarily unavailable." }, 503); }
+}
+
+export function readLogs(request: BunRequest): Promise<Response> {
+  return guarded(request, false, () => json(logs.snapshot()));
+}
+
+export function clearLogs(request: BunRequest): Promise<Response> {
+  return guarded(request, true, () => {
+    logs.clear();
+    logs.record({ source: "console", event: "logs.cleared", message: "Console history cleared by administrator" });
+    return json(logs.snapshot());
+  });
+}
+
+let windowStart = 0;
+let reports = 0;
+
+async function readReport(request: Request): Promise<unknown> {
+  const reader = request.body?.getReader();
+  if (!reader) return null;
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 1_024) { void reader.cancel().catch(() => undefined); return null; }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch { return null; }
+  finally { reader.releaseLock(); }
+}
+
+export function reportBrowserEvent(request: BunRequest): Promise<Response> {
+  return guarded(request, true, async () => {
+    if (request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
+      return json({ error: "Content-Type must be application/json." }, 415);
+    }
+    const now = Date.now();
+    if (now - windowStart >= 60_000) { windowStart = now; reports = 0; }
+    if (++reports > 120) return json({ error: "Too many browser log events." }, 429);
+    const body = await readReport(request);
+    if (!body || typeof body !== "object" || Array.isArray(body)) return json({ error: "Invalid log event." }, 400);
+    const data = body as Record<string, unknown>;
+    if (Object.keys(data).some((key) => !["event", "page", "added", "removed", "updated", "reordered"].includes(key)) ||
+        typeof data.event !== "string" || !Object.hasOwn(browserEvents, data.event)) {
+      return json({ error: "Unknown browser log event." }, 400);
+    }
+    if (data.page !== undefined && !dashboardPages.some((page) => page === data.page)) return json({ error: "Invalid page." }, 400);
+    const details: LogDetails = {};
+    for (const key of ["added", "removed", "updated"] as const) {
+      if (data[key] === undefined) continue;
+      if (typeof data[key] !== "number" || !Number.isInteger(data[key]) || data[key] < 0 || data[key] > 100_000) return json({ error: "Invalid counts." }, 400);
+      details[key] = data[key];
+    }
+    if (data.reordered !== undefined) {
+      if (typeof data.reordered !== "boolean") return json({ error: "Invalid order flag." }, 400);
+      details.reordered = data.reordered;
+    }
+    const event = data.event as BrowserEvent;
+    logs.record({ source: "dashboard", event, message: `${browserEvents[event]}${data.page ? ` (${data.page})` : ""}` },
+      event === "dashboard.error" || event === "dashboard.rejection" ? "ERROR" : event === "dashboard.copy-failed" ? "WARN" : "INFO", details, "browser");
+    return json({ success: true });
+  });
+}

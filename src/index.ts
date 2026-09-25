@@ -17,6 +17,15 @@ import {
 import { initCliproxy, shutdownCliproxy } from "./lib/cliproxy";
 import { checkDatabaseConnection } from "./lib/db";
 import { env } from "./lib/env";
+import { clearLogs, readLogs, reportBrowserEvent } from "./lib/logging/http";
+import { loggedGateway, loggedRequest } from "./lib/logging/request";
+import { logs } from "./lib/logging/store";
+
+// All new API handlers should use this registration helper. Polling endpoints
+// log failures only so watching the dashboard does not flood the console.
+function tracked(source: string, event: string, message: string, handler: Parameters<typeof loggedRequest>[1], failuresOnly = false) {
+  return loggedRequest({ source, event, message }, handler, failuresOnly);
+}
 
 await ensureAuthSchema();
 await ensureDefaultPassword();
@@ -35,7 +44,8 @@ const server = serve({
         try {
           await checkDatabaseConnection();
           return Response.json({ ok: true, database: "connected" });
-        } catch (error) {
+         } catch (error) {
+           logs.record({ source: "database", event: "database.health.failed", message: "Database health check failed" }, "ERROR");
           console.error("Database health check failed:", error);
           return Response.json(
             { ok: false, database: "unavailable" },
@@ -44,21 +54,23 @@ const server = serve({
         }
       },
     },
-    "/api/auth/login": { POST: login },
-    "/api/auth/logout": { POST: logout },
-    "/api/auth/password": { POST: changePassword },
-    "/api/auth/status": { GET: status },
-    "/api/cliproxy/status": { GET: cliproxyStatus },
-    "/api/cliproxy/versions": { GET: cliproxyVersions },
-    "/api/cliproxy/key": { GET: cliproxyKey },
-    "/api/cliproxy/install": { POST: cliproxyInstall },
-    "/api/cliproxy/start": { POST: cliproxyStart },
-    "/api/cliproxy/stop": { POST: cliproxyStop },
-    "/api/cliproxy/restart": { POST: cliproxyRestart },
-    "/v1": cliproxyRoot,
-    "/v1/*": proxyCliproxy,
-    "/v0/management": cliproxyManagementNotFound,
-    "/v0/management/*": cliproxyManagementNotFound,
+    "/api/auth/login": { POST: tracked("auth", "auth.login", "Sign-in request", login) },
+    "/api/auth/logout": { POST: tracked("auth", "auth.logout", "Sign-out request", logout) },
+    "/api/auth/password": { POST: tracked("auth", "auth.password.change", "Password-change request (success revokes all sessions)", changePassword) },
+    "/api/auth/status": { GET: tracked("auth", "auth.status", "Session status request", status, true) },
+    "/api/logs": { GET: readLogs, DELETE: clearLogs },
+    "/api/logs/events": { POST: reportBrowserEvent },
+    "/api/cliproxy/status": { GET: tracked("cliproxy", "cliproxy.status", "CLIProxy status request", cliproxyStatus, true) },
+    "/api/cliproxy/versions": { GET: tracked("cliproxy", "cliproxy.versions", "CLIProxy version list request", cliproxyVersions) },
+    "/api/cliproxy/key": { GET: tracked("cliproxy", "cliproxy.key.read", "Gateway credential access request", cliproxyKey) },
+    "/api/cliproxy/install": { POST: tracked("cliproxy", "cliproxy.install", "CLIProxy installation request", cliproxyInstall) },
+    "/api/cliproxy/start": { POST: tracked("cliproxy", "cliproxy.start", "CLIProxy start request", cliproxyStart) },
+    "/api/cliproxy/stop": { POST: tracked("cliproxy", "cliproxy.stop", "CLIProxy stop request", cliproxyStop) },
+    "/api/cliproxy/restart": { POST: tracked("cliproxy", "cliproxy.restart", "CLIProxy restart request", cliproxyRestart) },
+    "/v1": tracked("gateway", "gateway.root", "Gateway root request", cliproxyRoot),
+    "/v1/*": loggedGateway(proxyCliproxy),
+    "/v0/management": tracked("gateway", "gateway.management.blocked", "Private management endpoint rejected", cliproxyManagementNotFound),
+    "/v0/management/*": tracked("gateway", "gateway.management.blocked", "Private management endpoint rejected", cliproxyManagementNotFound),
     "/api/hello": {
       GET: () => Response.json({ message: "Hello from Bun and React" }),
     },
@@ -67,6 +79,7 @@ const server = serve({
 });
 
 console.log(`🚀 Bun fullstack server running at ${server.url}`);
+logs.record({ source: "server", event: "server.started", message: "RawRoute server started" });
 
 // The service's standalone signal handlers exit the process. Let this server
 // coordinate its shutdown instead so the proxy and HTTP listener stop once.
@@ -78,6 +91,7 @@ let shutdown: Promise<void> | undefined;
 
 function handleShutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   if (shutdown) return shutdown;
+  logs.record({ source: "server", event: "server.stopping", message: "RawRoute shutdown started" });
   process.exitCode = signal === "SIGINT" ? 130 : 143;
 
   const mutationsDrained = stopAcceptingCliproxyMutations();
@@ -87,6 +101,7 @@ function handleShutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
       await Promise.all([initialization, mutationsDrained]);
       await shutdownCliproxy();
     } catch (error) {
+      logs.record({ source: "server", event: "server.shutdown.failed", message: "CLIProxy shutdown failed" }, "ERROR");
       console.error("CLIProxy shutdown failed:", error);
       process.exitCode = 1;
     } finally {
@@ -101,5 +116,6 @@ process.once("SIGINT", () => void handleShutdown("SIGINT"));
 process.once("SIGTERM", () => void handleShutdown("SIGTERM"));
 
 initialization = initCliproxy().catch((error: unknown) => {
+  logs.record({ source: "server", event: "server.initialization.failed", message: "CLIProxy initialization failed" }, "ERROR");
   console.error("CLIProxy initialization failed:", error);
 });

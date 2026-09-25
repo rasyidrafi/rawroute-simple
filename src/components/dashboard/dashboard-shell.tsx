@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { reportEvent } from "@/lib/logging/client";
 import { AppSidebar, type DashboardRoute } from "@/components/app-sidebar";
 import { PasswordChangeForm } from "@/components/dashboard/password-change-form";
 import { DashboardViews } from "@/components/dashboard/views";
@@ -81,7 +82,20 @@ function DashboardContent({
   );
   const toolRoute = route.startsWith("tool-");
 
+  useEffect(() => {
+    if (isDefaultPassword) return;
+    const onError = () => reportEvent("dashboard.error");
+    const onRejection = () => reportEvent("dashboard.rejection");
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onRejection);
+    return () => {
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onRejection);
+    };
+  }, [isDefaultPassword]);
+
   function navigate(nextRoute: DashboardRoute) {
+    if (nextRoute !== route) reportEvent("dashboard.navigation", { page: nextRoute });
     if (nextRoute === "providers") setSelectedProvider(null);
     setRoute(nextRoute);
   }

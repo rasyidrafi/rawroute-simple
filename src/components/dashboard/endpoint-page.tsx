@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { reportEvent } from "@/lib/logging/client";
 import { CopyIcon, RefreshCwIcon, RouteIcon } from "lucide-react";
 import { copy, notify, Page } from "@/components/dashboard/page-ui";
 import { Badge } from "@/components/ui/badge";
@@ -79,8 +80,10 @@ export function EndpointKeys() {
     try {
       if (!navigator.clipboard) throw new Error("Clipboard access is unavailable.");
       await navigator.clipboard.writeText(apiKey);
+      reportEvent("gateway-key.copied");
       notify("CLIProxyAPI key copied");
     } catch {
+      reportEvent("dashboard.copy-failed");
       setKeyError("Clipboard access failed. Reveal the key to select and copy it manually.");
     }
   }

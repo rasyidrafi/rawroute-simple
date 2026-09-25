@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { useLoggedState } from "@/hooks/use-logged-state";
 import {
   ArrowDownIcon,
   ArrowLeftIcon,
@@ -292,10 +293,10 @@ export function ProviderDetail({
   models: Model[];
   setModels: React.Dispatch<React.SetStateAction<Model[]>>;
 }) {
-  const [keyNames, setKeyNames] = useState([
+  const [keyNames, setKeyNames] = useLoggedState([
     `${provider.name} primary`,
     `${provider.name} standby`,
-  ]);
+  ], "provider-keys.changed");
   const [newKey, setNewKey] = useState("");
   const [modelOpen, setModelOpen] = useState(false);
   const [editingModel, setEditingModel] = useState<Model | null>(null);

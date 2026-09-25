@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { useLoggedState } from "@/hooks/use-logged-state";
+import { reportEvent } from "@/lib/logging/client";
 import { ArrowDownIcon, ArrowUpIcon, ExternalLinkIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { Confirm, notify, Page } from "@/components/dashboard/page-ui";
 import { DataTableHeader } from "@/components/dashboard/data-table-header";
@@ -21,7 +23,7 @@ export function CodexProviders({
   models: CodexModel[];
   setModels: React.Dispatch<React.SetStateAction<CodexModel[]>>;
 }) {
-  const [accounts, setAccounts] = useState([
+  const [accounts, setAccounts] = useLoggedState([
     {
       id: "codex-work",
       name: "Work Codex",
@@ -36,7 +38,7 @@ export function CodexProviders({
       enabled: true,
       quota: 28,
     },
-  ]);
+  ], "codex-accounts.changed");
   const [connect, setConnect] = useState(false);
   const [remove, setRemove] = useState<string | null>(null);
   return (
@@ -145,9 +147,10 @@ export function CodexProviders({
                         size="sm"
                         variant="outline"
                         disabled={account.quota > 0}
-                        onClick={() =>
-                          notify("Codex reset credit redeemed")
-                        }
+                        onClick={() => {
+                          reportEvent("codex.credit");
+                          notify("Codex reset credit redeemed");
+                        }}
                       >
                         Redeem
                       </Button>
@@ -217,7 +220,7 @@ export function CodexProviders({
           <div className="space-y-3">
             <Button
               variant="outline"
-              onClick={() => notify("Mock device authorization started", "info")}
+              onClick={() => { reportEvent("codex.authorize"); notify("Mock device authorization started", "info"); }}
             >
               <ExternalLinkIcon />
               Open Codex sign-in

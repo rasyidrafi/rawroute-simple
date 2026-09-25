@@ -11,6 +11,8 @@ Bun.env.RAWROUTE_DATA_DIR = `/tmp/opencode/rawroute-auth-data-${crypto.randomUUI
 const { db: testDb } = await import("./db");
 const auth = await import("./auth");
 const { cliproxyStatus } = await import("./cliproxy/http");
+const { readLogs, clearLogs, reportBrowserEvent } = await import("./logging/http");
+const { logs } = await import("./logging/store");
 
 type TestRequest = BunRequest & {
   readSessionToken: () => string | null;
@@ -485,4 +487,53 @@ test("password change requires an authenticated session", async () => {
     passwordRequest("missing-session", DEFAULT_PASSWORD, "A-new-stronger-password-1"),
   );
   expect(response.status).toBe(401);
+});
+
+test("console history requires a non-default session and same-origin mutations", async () => {
+  logs.clear();
+  logs.record({ source: "test", event: "test.private", message: "Private administrator event" });
+  expect((await readLogs(makeRequest("/api/logs"))).status).toBe(401);
+  const initial = await login();
+  expect((await readLogs(makeRequest("/api/logs", { sessionToken: initial.token }))).status).toBe(403);
+  await auth.changePassword(passwordRequest(initial.token, DEFAULT_PASSWORD, "Log-test-strong-password-1"));
+  const session = await login("Log-test-strong-password-1");
+  const response = await readLogs(makeRequest("/api/logs", { sessionToken: session.token }));
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(JSON.stringify(await responseBody(response))).toContain("Private administrator event");
+  for (const origin of [null, "https://other.example"]) {
+    expect((await clearLogs(makeRequest("/api/logs", { method: "DELETE", origin, sessionToken: session.token }))).status).toBe(403);
+  }
+  expect(logs.snapshot().entries).toHaveLength(1);
+  const cleared = await clearLogs(makeRequest("/api/logs", { method: "DELETE", sessionToken: session.token }));
+  expect(cleared.status).toBe(200);
+  expect(logs.snapshot().entries.map((entry) => entry.event)).toEqual(["logs.cleared"]);
+  await auth.logout(makeRequest("/api/auth/logout", { method: "POST", sessionToken: session.token }));
+  expect((await readLogs(makeRequest("/api/logs", { sessionToken: session.token }))).status).toBe(401);
+});
+
+test("browser event intake rejects forged messages, secrets, invalid types and oversized bodies", async () => {
+  const initial = await login();
+  await auth.changePassword(passwordRequest(initial.token, DEFAULT_PASSWORD, "Log-test-strong-password-1"));
+  const session = await login("Log-test-strong-password-1");
+  logs.clear();
+  for (const body of [
+    "{", "x".repeat(1025),
+    JSON.stringify({ event: "auth.login" }),
+    JSON.stringify({ event: "toString" }),
+    JSON.stringify({ event: "providers.changed", message: "secret" }),
+    JSON.stringify({ event: "providers.changed", added: "secret" }),
+    JSON.stringify({ event: "providers.changed", added: -1 }),
+    JSON.stringify({ event: "providers.changed", page: "secret" }),
+  ]) {
+    expect((await reportBrowserEvent(makeRequest("/api/logs/events", { sessionToken: session.token, body }))).status).toBe(400);
+  }
+  expect(logs.snapshot().entries).toHaveLength(0);
+  const report = () => makeRequest("/api/logs/events", {
+    sessionToken: session.token, body: JSON.stringify({ event: "providers.changed", added: 1 }),
+  });
+  expect((await reportBrowserEvent(report())).status).toBe(200);
+  expect(logs.snapshot().entries[0]).toMatchObject({ event: "providers.changed", origin: "browser", details: { added: 1 } });
+  for (let index = 0; index < 120; index++) await reportBrowserEvent(report());
+  expect((await reportBrowserEvent(report())).status).toBe(429);
 });

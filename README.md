@@ -2,6 +2,13 @@
 
 This deployment builds one image from the official Bun image and runs the Bun application directly. CLIProxy is managed as a subprocess inside that container and binds only to `127.0.0.1:8317`; Compose does not publish that port.
 
+## Console Log
+
+The dashboard Console Log shows live server and dashboard activity, with severity
+filters, search, copy, and shared history clearing. It retains the latest 2,000
+events in memory for the running server; restarting the server resets the history.
+See [Logging](docs/logging.md) for event coverage and how to instrument new features.
+
 ## Private Testing
 
 From the repository root:

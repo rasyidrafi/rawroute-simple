@@ -278,58 +278,6 @@ export const initialPriceGroups: PriceGroup[] = [
   },
 ];
 
-export const consoleEntries = [
-  {
-    time: "11:42:18.283",
-    level: "INFO",
-    source: "gateway",
-    text: "POST /v1/chat/completions 200",
-    detail: "key=Production gateway model=openai/gpt-5 latency=842ms",
-  },
-  {
-    time: "11:42:13.091",
-    level: "INFO",
-    source: "router",
-    text: "fallback chain selected",
-    detail: "combo=default target=openai/gpt-5",
-  },
-  {
-    time: "11:41:59.804",
-    level: "WARN",
-    source: "provider",
-    text: "upstream rate limit observed",
-    detail: "provider=anthropic retry_after=1.2s",
-  },
-  {
-    time: "11:41:31.410",
-    level: "INFO",
-    source: "budget",
-    text: "usage window updated",
-    detail: "key=Developer sandbox spent=$22.13",
-  },
-  {
-    time: "11:40:55.907",
-    level: "ERROR",
-    source: "gateway",
-    text: "request rejected",
-    detail: "key=CI evaluation reason=budget_limit",
-  },
-  {
-    time: "11:39:07.223",
-    level: "INFO",
-    source: "auth",
-    text: "dashboard session verified",
-    detail: "session=active",
-  },
-  {
-    time: "11:38:48.740",
-    level: "INFO",
-    source: "provider",
-    text: "health probe succeeded",
-    detail: "provider=groq duration=184ms",
-  },
-];
-
 export const toolData = {
   tools: ["Web search", "Postgres query", "GitHub issues", "Slack message"],
   connections: ["Linear workspace", "Production Postgres", "GitHub rawroute"],

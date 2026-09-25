@@ -1,6 +1,7 @@
 "use client";
 
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense } from "react";
+import { useLoggedState } from "@/hooks/use-logged-state";
 import { type DashboardRoute } from "@/components/app-sidebar";
 import { Budgets } from "@/components/dashboard/budgets-page";
 import { CliproxyPage } from "@/components/dashboard/cliproxy-page";
@@ -46,13 +47,13 @@ export function DashboardViews({
   onPasswordChanged,
 }: Props) {
   const keys = initialGatewayKeys;
-  const [providers, setProviders] = useState(initialProviders);
-  const [models, setModels] = useState(initialModels);
-  const [codexModels, setCodexModels] = useState(initialCodexModels);
-  const [aliases, setAliases] = useState(initialAliases);
-  const [combos, setCombos] = useState(initialCombos);
-  const [budgets, setBudgets] = useState(initialBudgets);
-  const [priceGroups, setPriceGroups] = useState(initialPriceGroups);
+  const [providers, setProviders] = useLoggedState(initialProviders, "providers.changed");
+  const [models, setModels] = useLoggedState(initialModels, "models.changed");
+  const [codexModels, setCodexModels] = useLoggedState(initialCodexModels, "codex-models.changed");
+  const [aliases, setAliases] = useLoggedState(initialAliases, "aliases.changed");
+  const [combos, setCombos] = useLoggedState(initialCombos, "combos.changed");
+  const [budgets, setBudgets] = useLoggedState(initialBudgets, "budgets.changed");
+  const [priceGroups, setPriceGroups] = useLoggedState(initialPriceGroups, "pricing.changed");
 
   if (route === "endpoint") return <EndpointKeys />;
   if (route === "cliproxy") return <CliproxyPage />;

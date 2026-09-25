@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { reportEvent } from "@/lib/logging/client";
 import { cn } from "cn";
 import { ChevronsUpDownIcon, PlusIcon, SparklesIcon, Trash2Icon } from "lucide-react";
 import { Confirm, Metadata, notify, Page } from "@/components/dashboard/page-ui";
@@ -118,6 +119,7 @@ export function Budgets({
               setWindowStart(windowStartDraft);
               setWindowEnd(windowEndDraft);
               setWindowOpen(false);
+              reportEvent("budgets.window");
               notify("Mock budget window updated");
             }}>Save window</Button>
           </DialogFooter>
@@ -241,7 +243,7 @@ export function Budgets({
               <TabsContent value="beyond" className="mt-4">
                 <div className="rounded-lg border p-4">
                   <div className="flex items-center gap-3">
-                    <Switch checked={beyondLimits} onCheckedChange={setBeyondLimits} aria-label="Enable Beyond Limits" />
+                    <Switch checked={beyondLimits} onCheckedChange={(value) => { setBeyondLimits(value); reportEvent("budgets.beyond-limits"); }} aria-label="Enable Beyond Limits" />
                     <div>
                       <div className="font-medium">Beyond Limits</div>
                       <p className="text-sm text-muted-foreground">
@@ -407,6 +409,7 @@ function BudgetDialogs({
         onConfirm={() => {
           setUnlimited((value) => !value);
           setConfirmUnlimited(false);
+          reportEvent("budgets.unlimited");
           notify("Unlimited Mode updated");
         }}
       />
