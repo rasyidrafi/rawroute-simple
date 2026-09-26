@@ -371,7 +371,7 @@ function WorkspaceDialogs({
             <DialogHeader>
               <DialogTitle>{editing ? "Rename workspace" : "Create workspace"}</DialogTitle>
               <DialogDescription>
-                Workspace names are persisted. Provider, OAuth, routing, and pricing controls remain browser-only mock fixtures until their workspace APIs are added.
+                Workspace names and ordinary provider desired state are persisted. Routing, pricing, OAuth, and Codex demo controls remain browser-only fixtures.
               </DialogDescription>
             </DialogHeader>
             <FieldGroup className="mt-5">

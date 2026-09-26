@@ -67,16 +67,70 @@ audit/retry safety. Workspace deletion removes all of that workspace's keys,
 including tombstones. Gateway calls take workspace write admission before their
 workspace log is written, so deletion drains accepted calls and a stale call
 cannot recreate a deleted workspace log buffer.
-Provider credentials and OAuth accounts remain future scoped-resource work. The
-in-memory console buffer is scoped now: `/api/logs` requires an active workspace
+Provider configuration is a persisted workspace resource. `GET`/`POST
+`/api/providers`, `GET`/`PATCH`/`DELETE /api/providers/:providerId`, credential
+CRUD/reordering under `/api/providers/:providerId/credentials` (with the
+temporary `/api-keys` alias), and model CRUD under
+`/api/providers/:providerId/models` require an active workspace header. Provider
+and model IDs are stable UUIDs; prefixes and exposed `prefix/suffix` gateway
+model IDs are scoped unique. Upstream credential values are AES-256-GCM encrypted
+with a separate `$RAWROUTE_DATA_DIR/provider-credentials/master-key`, bound to
+the credential, provider, and workspace. Responses only return the
+`"__unchanged__"` mask and never disclose a stored upstream secret.
+
+Provider configuration is reconciled through CLIProxy's authenticated private
+loopback management API. Entries use a hashed workspace/provider namespace
+(`rr-ws-…-p-…`) and a `rr-managed-…` name prefix, independent of the editable
+public model prefix. RawRoute replaces only entries carrying both markers,
+preserves unmanaged entries, and rejects an unmanaged namespace collision. Shared
+management read/modify/write work is serialized with CLIProxy lifecycle operations.
+The loopback URL and management secret never appear in browser DTOs or logs.
+
+`openai-chat` projects to `openai-compatibility`; `anthropic-messages` projects to
+`claude-api-key`. Only enabled providers, models, and credentials project. Credential
+order is highest-priority first and CLIProxy routing is set to `fill-first`.
+Anonymous OpenAI-compatible providers are supported. `openai-responses` is stored
+but not projected because there is no native Responses executor; its state is
+`native-execution-pending`.
+
+Provider mutation responses contain a separate `sync` result, so a committed save
+stays successful when CLIProxy is offline. `GET /api/providers/:providerId/sync`
+returns `{ "sync": ProviderSyncStatus }`; `POST` to that path retries it with the
+same authenticated workspace scope. `ProviderSyncStatus` is `{ providerId,
+desiredRevision, appliedRevision, state, error, updatedAt, deleted }`; errors are
+sanitised. Provider, credential, and model deletion return `{ "deleted": true,
+"sync": ProviderSyncStatus }` (200), rather than an empty 204. A deleted provider's
+sync endpoint remains available while its cleanup tombstone exists.
+Startup, install, and restart reconcile active providers. Provider/workspace deletion
+writes a durable cleanup tombstone before data is removed. Anthropic management
+entries do not retain a name in current CLIProxy releases, so RawRoute writes a
+SHA-256 fingerprint intent for the schema-retained entry before the management PUT
+and verifies it after the write; cleanup only removes a matching fingerprint and
+retains its tombstone if ownership cannot be proved. An offline cleanup remains durable for later reconciliation and never
+recreates deleted workspace resources. The same scan is registered with CLIProxy's
+automatic crash-recovery path and is drained before CLIProxy shutdown.
+
+Projection fingerprints use CLIProxy's retained schema, not arbitrary response
+fields: top-level Claude `name` and runtime auth state are excluded, empty generated
+proxy URLs are normalized away, nonempty proxy URLs remain significant, and static
+header values and Claude API keys are trimmed with empty headers omitted. A newly derived fingerprint is
+persisted only after an in-lock read proves the namespace has no unowned entry.
+
+The database is authoritative for provider configuration and projection intent. This
+shared CLIProxy transport is administrative configuration isolation, not tenant-
+isolated inference routing. Public `/v1` remains deliberately gated and does not use
+provider data.
+
+The in-memory console buffer is scoped now: `/api/logs` requires an active workspace
 header, while `/api/logs/global` is the explicit global system view.
 
-The provider, Codex, routing, budget, and pricing controls shown in the dashboard
-are separate browser-memory fixtures for each selected workspace. They survive
-page navigation and switching back during that browser session, but they do not
-survive a browser reload and are not server-side isolation. The selected workspace
-ID is the only browser-persisted workspace preference. Do not represent these
-fixtures as persisted provider or OAuth configuration.
+The current dashboard Providers controls are still separate browser-memory
+fixtures and are not wired to the persisted provider API yet. Codex, routing,
+budget, and pricing controls are also browser-memory fixtures. They survive page
+navigation and switching back during that browser session, but they do not survive
+a browser reload and are not server-side isolation. The selected workspace ID is
+the only browser-persisted workspace preference. Do not represent those fixtures
+as persisted configuration.
 
 ## Contract for future scoped resources
 

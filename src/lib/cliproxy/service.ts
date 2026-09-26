@@ -134,6 +134,26 @@ let pendingRestartBackoff:
   | undefined;
 let pendingRestart: { record: ProcessRecord; exitCode: number; generation: number } | undefined;
 const intentionalExits = new Set<number>();
+let recoveryReconciler: (() => Promise<void>) | undefined;
+
+/** Registers the server-owned reconciliation job run after an automatic recovery start. */
+export function registerCliproxyRecoveryReconciler(reconciler: (() => Promise<void>) | undefined): () => void {
+  recoveryReconciler = reconciler;
+  return () => {
+    if (recoveryReconciler === reconciler) recoveryReconciler = undefined;
+  };
+}
+
+async function reconcileAfterAutomaticRecovery(): Promise<void> {
+  if (!recoveryReconciler) return;
+  try {
+    await recoveryReconciler();
+  } catch {
+    // The provider job persists its own sanitised retry state. Keep the healthy
+    // child running; a failed reconciliation is not a failed process restart.
+    logs.record({ source: "cliproxy", event: "cliproxy.recovery.reconcile.failed", message: "Provider reconciliation after CLIProxy recovery failed" }, "ERROR");
+  }
+}
 
 export function getStartupAction(
   desiredRunning: boolean,
@@ -369,6 +389,14 @@ async function withLifecycleLock<T>(callback: () => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * Serializes every private remote-management read/modify/write with lifecycle
+ * operations. It intentionally exposes no paths or secrets to callers.
+ */
+export async function withCliproxyManagementLock<T>(callback: () => Promise<T>): Promise<T> {
+  return await withLifecycleLock(callback);
+}
+
 function currentOperation(): CliproxyOperation | null {
   return operationQueue[0] ?? null;
 }
@@ -574,8 +602,14 @@ async function scheduleRestart(
           attemptedStart = true;
           await startCurrentVersion();
         });
-        if (activeProcess) logs.record({ source: "cliproxy", event: "cliproxy.recovery.completed", message: "CLIProxy automatic recovery completed" });
-        if (!attemptedStart || activeProcess) return;
+        if (activeProcess) {
+          logs.record({ source: "cliproxy", event: "cliproxy.recovery.completed", message: "CLIProxy automatic recovery completed" });
+          // This runs after the lifecycle lock was released, so provider sync
+          // can take the same lock for its private management RMW safely.
+          await reconcileAfterAutomaticRecovery();
+          return;
+        }
+        if (!attemptedStart) return;
       } catch (error) {
         logs.record({ source: "cliproxy", event: "cliproxy.recovery.failed", message: "CLIProxy automatic recovery attempt failed" }, "ERROR", { attempt: restartAttempts });
         lastError = error instanceof Error ? error.message : "CLIProxy restart failed";

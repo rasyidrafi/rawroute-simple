@@ -1,6 +1,7 @@
 import type { BunRequest, Server } from "bun";
 import { getCurrentSession } from "../auth";
 import { env } from "../env";
+import { reconcilePendingProviderProjections } from "../provider-sync";
 import {
   getStatus,
   getVersions,
@@ -251,7 +252,11 @@ export function cliproxyInstall(request: BunRequest, server: Server<undefined>):
   return withManagement(request, async () => {
     const version = await readInstallVersion(request);
     server.timeout(request, 0);
-    const installedVersion = await runMutation(() => install(version));
+    const installedVersion = await runMutation(async () => {
+      const result = await install(version);
+      await reconcilePendingProviderProjections();
+      return result;
+    });
     return json({ version: installedVersion });
   }, 502, true);
 }
@@ -260,17 +265,21 @@ function cliproxyAction(
   request: BunRequest,
   server: Server<undefined>,
   operation: () => Promise<void>,
+  reconcile = false,
 ): Promise<Response> {
   return withManagement(request, async () => {
     await assertEmptyBody(request);
     server.timeout(request, 0);
-    await runMutation(operation);
+    await runMutation(async () => {
+      await operation();
+      if (reconcile) await reconcilePendingProviderProjections();
+    });
     return json({ ok: true });
   }, 502, true);
 }
 
 export function cliproxyStart(request: BunRequest, server: Server<undefined>): Promise<Response> {
-  return cliproxyAction(request, server, start);
+  return cliproxyAction(request, server, start, true);
 }
 
 export function cliproxyStop(request: BunRequest, server: Server<undefined>): Promise<Response> {
@@ -278,7 +287,7 @@ export function cliproxyStop(request: BunRequest, server: Server<undefined>): Pr
 }
 
 export function cliproxyRestart(request: BunRequest, server: Server<undefined>): Promise<Response> {
-  return cliproxyAction(request, server, restart);
+  return cliproxyAction(request, server, restart, true);
 }
 
 export function cliproxyManagementNotFound(): Response {

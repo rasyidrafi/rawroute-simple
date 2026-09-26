@@ -15,6 +15,7 @@ import { ConsoleLog, SystemLogPanel } from "@/components/dashboard/console-log-p
 import { EndpointKeys } from "@/components/dashboard/endpoint-page";
 import { Pricing } from "@/components/dashboard/pricing-page";
 import { ProviderDetail, Providers } from "@/components/dashboard/providers-page";
+import { useProviders } from "@/components/dashboard/use-providers";
 import { Routing } from "@/components/dashboard/routing-page";
 import { Settings } from "@/components/dashboard/settings-page";
 import { ToolGateway } from "@/components/dashboard/tool-gateway-page";
@@ -26,12 +27,10 @@ import {
   initialCodexAccounts,
   initialCodexModels,
   initialGatewayKeys,
-  initialModels,
-  initialProviderCredentialLabels,
   initialPriceGroups,
-  initialProviders,
 } from "@/mock/dashboard-data";
-import type { Alias, Budget, CodexAccount, CodexModel, Combo, Model, PriceGroup, Provider, ProviderCredentialLabels } from "@/mock/dashboard-data";
+import type { Alias, Budget, CodexAccount, CodexModel, Combo, Model, PriceGroup } from "@/mock/dashboard-data";
+import type { ProviderModelDto } from "@/lib/providers-client";
 
 const Usage = lazy(() =>
   import("@/components/dashboard/usage-page").then(({ Usage }) => ({
@@ -118,11 +117,10 @@ export function DashboardViews({
   onPasswordChanged,
 }: Props) {
   const { activeWorkspaceId, workspaces, workspaceListVersion, isLoading, error, reload } = useWorkspace();
-  const [providers, setProviders] = useWorkspaceCollection(activeWorkspaceId, workspaces, workspaceListVersion, initialProviders, "providers.changed");
-  const [models, setModels] = useWorkspaceCollection(activeWorkspaceId, workspaces, workspaceListVersion, initialModels, "models.changed");
+  const providerState = useProviders(activeWorkspaceId);
+  const models = providerModelsAsDashboardModels(providerState.resource.models);
   const [codexModels, setCodexModels] = useWorkspaceCollection(activeWorkspaceId, workspaces, workspaceListVersion, initialCodexModels, "codex-models.changed");
   const [codexAccounts, setCodexAccounts] = useWorkspaceCollection(activeWorkspaceId, workspaces, workspaceListVersion, initialCodexAccounts, "codex-accounts.changed");
-  const [providerCredentialLabels, setProviderCredentialLabels] = useWorkspaceCollection(activeWorkspaceId, workspaces, workspaceListVersion, initialProviderCredentialLabels, "provider-keys.changed");
   const [aliases, setAliases] = useWorkspaceCollection(activeWorkspaceId, workspaces, workspaceListVersion, initialAliases, "aliases.changed");
   const [combos, setCombos] = useWorkspaceCollection(activeWorkspaceId, workspaces, workspaceListVersion, initialCombos, "combos.changed");
   const [budgets, setBudgets] = useWorkspaceCollection(activeWorkspaceId, workspaces, workspaceListVersion, initialBudgets, "budgets.changed");
@@ -135,8 +133,8 @@ export function DashboardViews({
   return renderDashboardRoute({
     route, onNavigate, providerId, providerDetail, onPasswordChanged,
     workspaceId: activeWorkspaceId,
-    providers, setProviders, models, setModels, codexModels, setCodexModels,
-    codexAccounts, setCodexAccounts, providerCredentialLabels, setProviderCredentialLabels,
+    providerState, models, codexModels, setCodexModels,
+    codexAccounts, setCodexAccounts,
     aliases, setAliases, combos, setCombos, budgets, setBudgets, priceGroups, setPriceGroups,
   });
 }
@@ -144,16 +142,12 @@ export function DashboardViews({
 type CollectionSetter<T> = Dispatch<SetStateAction<T[]>>;
 type WorkspaceRouteProps = Props & {
   workspaceId: string | null;
-  providers: Provider[];
-  setProviders: CollectionSetter<Provider>;
+  providerState: ReturnType<typeof useProviders>;
   models: Model[];
-  setModels: CollectionSetter<Model>;
   codexModels: CodexModel[];
   setCodexModels: CollectionSetter<CodexModel>;
   codexAccounts: CodexAccount[];
   setCodexAccounts: CollectionSetter<CodexAccount>;
-  providerCredentialLabels: ProviderCredentialLabels[];
-  setProviderCredentialLabels: CollectionSetter<ProviderCredentialLabels>;
   aliases: Alias[];
   setAliases: CollectionSetter<Alias>;
   combos: Combo[];
@@ -166,28 +160,19 @@ type WorkspaceRouteProps = Props & {
 
 function renderDashboardRoute({
   route, onNavigate, providerId, providerDetail, onPasswordChanged, workspaceId,
-  providers, setProviders, models, setModels, codexModels, setCodexModels,
-  codexAccounts, setCodexAccounts, providerCredentialLabels, setProviderCredentialLabels,
+  providerState, models, codexModels, setCodexModels,
+  codexAccounts, setCodexAccounts,
   aliases, setAliases, combos, setCombos, budgets, setBudgets, priceGroups, setPriceGroups,
 }: WorkspaceRouteProps): ReactNode {
   if (route === "endpoint" && workspaceId) return <EndpointKeys key={workspaceId} workspaceId={workspaceId} />;
   if (route === "cliproxy") return <CliproxyPage />;
   if (route === "system-logs") return <SystemLogPanel />;
   if (route === "providers") {
-    const provider = providers.find((item) => item.id === providerId);
-    if (!providerDetail) return <Providers key={workspaceId} providers={providers} setProviders={setProviders} />;
-    if (!provider) return <main className="flex-1 p-6"><h2 className="text-xl font-semibold">Provider not found</h2><Link to={dashboardPaths.providers}>Back to providers</Link></main>;
-    const keyFixture = providerCredentialLabels.find((item) => item.providerId === provider.id);
-    const defaultKeyNames = [`${provider.name} primary`, `${provider.name} standby`];
-    const setKeyNames: CollectionSetter<string> = (update) => setProviderCredentialLabels((items) => {
-      const current = items.find((item) => item.providerId === provider.id)?.labels ?? defaultKeyNames;
-      const labels = typeof update === "function" ? update(current) : update;
-      const fixture = { providerId: provider.id, labels };
-      return items.some((item) => item.providerId === provider.id)
-        ? items.map((item) => item.providerId === provider.id ? fixture : item)
-        : [...items, fixture];
-    });
-    return <ProviderDetail key={`${workspaceId}:${providerId}`} provider={provider} setProviders={setProviders} models={models} setModels={setModels} keyNames={keyFixture?.labels ?? defaultKeyNames} setKeyNames={setKeyNames} />;
+    const provider = providerState.resource.providers.find((item) => item.id === providerId);
+    if (!providerDetail) return <Providers key={workspaceId} resource={providerState.resource} reload={providerState.reload} read={providerState.read} mutate={providerState.mutate} isPending={providerState.isPending} />;
+    if (!provider && providerState.resource.phase === "ready") return <main className="flex-1 p-6"><h2 className="text-xl font-semibold">Provider not found</h2><Link to={dashboardPaths.providers}>Back to providers</Link></main>;
+    if (!provider) return <Providers key={workspaceId} resource={providerState.resource} reload={providerState.reload} read={providerState.read} mutate={providerState.mutate} isPending={providerState.isPending} />;
+    return <ProviderDetail key={`${workspaceId}:${providerId}`} provider={provider} resource={providerState.resource} reload={providerState.reload} read={providerState.read} mutate={providerState.mutate} isPending={providerState.isPending} />;
   }
   if (route === "codex" && workspaceId) return <CodexProviders key={workspaceId} workspaceId={workspaceId} models={codexModels} setModels={setCodexModels} accounts={codexAccounts} setAccounts={setCodexAccounts} />;
   if (route === "routing" && workspaceId) return <Routing key={workspaceId} workspaceId={workspaceId} aliases={aliases} setAliases={setAliases} combos={combos} setCombos={setCombos} models={models} />;
@@ -197,4 +182,15 @@ function renderDashboardRoute({
   if (route === "logs" && workspaceId) return <ConsoleLog key={workspaceId} workspaceId={workspaceId} />;
   if (route === "settings") return <Settings onPasswordChanged={onPasswordChanged} />;
   return <ToolGateway key={workspaceId} route={route} onNavigate={onNavigate} />;
+}
+
+/** Browser-only adapter: routing/pricing store public gateway IDs, never provider internal IDs. */
+function providerModelsAsDashboardModels(models: ProviderModelDto[]): Model[] {
+  return models.map((model) => ({
+    id: model.gatewayModelId,
+    name: model.name,
+    upstream: model.upstreamModel,
+    provider: model.providerId,
+    enabled: model.enabled,
+  }));
 }

@@ -7,9 +7,11 @@ export {
   initCliproxy,
   install,
   restart,
+  registerCliproxyRecoveryReconciler,
   shutdownCliproxy,
   start,
   stop,
+  withCliproxyManagementLock,
 } from "./service";
 export type {
   CliproxyOperation,
@@ -17,3 +19,9 @@ export type {
   CliproxyStatus,
   CliproxyVersions,
 } from "./service";
+export {
+  cliproxyManagement,
+  cliproxyManagementJson,
+  setCliproxyManagementTransportForTesting,
+} from "./management";
+export type { CliproxyManagementTransport } from "./management";
