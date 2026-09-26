@@ -1,6 +1,6 @@
 import { beforeEach, expect, test } from "bun:test";
 import type { BunRequest, Server } from "bun";
-import { createLogStore, logs, safeDetails } from "./store";
+import { createLogStore, logs, resolveLogStore, safeDetails } from "./store";
 import { loggedGateway, loggedRequest } from "./request";
 import { formatLog, type LogDetails } from "./types";
 import { collectionChanges } from "./collection";
@@ -30,6 +30,37 @@ test("retention is bounded, newest first, immutable to readers, and IDs survive 
   store.record(event);
   expect(store.snapshot().entries[0]!.id).not.toBe(oldId);
   expect(store.snapshot().evicted).toBe(0);
+});
+
+test("workspace and global buffers are isolated, clear independently, and obey the total bound", () => {
+  const store = createLogStore(2, 3);
+  const alpha = { kind: "workspace" as const, workspaceId: "alpha" };
+  const beta = { kind: "workspace" as const, workspaceId: "beta" };
+  const alphaAdmission = store.admitWorkspace(alpha.workspaceId);
+  const betaAdmission = store.admitWorkspace(beta.workspaceId);
+  store.record(event, "INFO", { index: 1 }, "server", alphaAdmission);
+  store.record(event, "INFO", { index: 2 }, "server", alphaAdmission);
+  store.record(event, "INFO", { index: 3 }, "server", betaAdmission);
+  store.record(event, "INFO", { index: 4 });
+  expect(store.snapshot(alpha).entries.map((entry) => entry.details.index)).toEqual([2]);
+  expect(store.snapshot(alpha).evicted).toBe(1);
+  expect(store.snapshot(beta).entries.map((entry) => entry.workspaceId)).toEqual(["beta"]);
+  expect(store.snapshot().entries.map((entry) => entry.scope)).toEqual(["global"]);
+  store.clear(alphaAdmission);
+  expect(store.snapshot(alpha).entries).toHaveLength(0);
+  expect(store.snapshot(beta).entries).toHaveLength(1);
+  store.deleteWorkspace("beta");
+  expect(store.snapshot(beta).entries).toHaveLength(0);
+});
+
+test("hot reload replaces an incompatible pre-scope runtime store", () => {
+  const legacy = { record() {}, snapshot() {}, clear() {} };
+  const runtime: { __rawrouteLogs?: unknown } = { __rawrouteLogs: legacy };
+  const migrated = resolveLogStore(runtime);
+  expect(migrated).not.toBe(legacy);
+  expect(migrated.version).toBe(2);
+  expect(typeof migrated.admitWorkspace).toBe("function");
+  expect(runtime.__rawrouteLogs).toBe(migrated);
 });
 
 test("metadata discards sensitive keys, strings, nested objects, nonfinite numbers, and unbounded keys", () => {
@@ -133,6 +164,17 @@ test("polling success is quiet and thrown errors are recorded without exception 
   await expect(loggedRequest(event, () => { throw cause; })(request, {} as Server<undefined>)).rejects.toBe(cause);
   expect(logs.snapshot().entries[0]!.level).toBe("ERROR");
   expect(JSON.stringify(logs.snapshot())).not.toContain("secret");
+});
+
+test("invalidated workspace admissions cannot recreate a deleted buffer", () => {
+  const store = createLogStore();
+  const workspaceId = crypto.randomUUID();
+  const admission = store.admitWorkspace(workspaceId);
+  expect(store.record(event, "INFO", {}, "server", admission)).toBe(true);
+  store.deleteWorkspace(workspaceId);
+  expect(store.record(event, "INFO", {}, "server", admission)).toBe(false);
+  expect(store.clear(admission)).toBe(false);
+  expect(store.snapshot({ kind: "workspace", workspaceId }).entries).toHaveLength(0);
 });
 
 test("gateway events identify allowlisted endpoints and methods without logging arbitrary URLs", async () => {

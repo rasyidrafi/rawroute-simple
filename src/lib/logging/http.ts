@@ -1,8 +1,10 @@
 import type { BunRequest } from "bun";
 import { getCurrentSession } from "../auth";
 import { env } from "../env";
+import { RequestScopeError, requireGlobalRequestScope, requireWorkspaceRequestScope, runWithWorkspaceScope } from "../request-scope";
+import { admitWorkspaceWrite } from "../workspaces";
 import { logs } from "./store";
-import { browserEvents, dashboardPages, type BrowserEvent, type LogDetails } from "./types";
+import { browserEvents, type BrowserEvent, type LogDetails } from "./types";
 
 function json(body: unknown, status = 200): Response {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
@@ -26,15 +28,67 @@ async function guarded(request: BunRequest, mutate: boolean, action: () => Respo
 }
 
 export function readLogs(request: BunRequest): Promise<Response> {
-  return guarded(request, false, () => json(logs.snapshot()));
+  return workspaceScoped(request, false, (scope) =>
+    runWithWorkspaceScope(scope, () => json(logs.snapshot({ kind: "workspace", workspaceId: scope.workspace.id }))),
+  );
 }
 
 export function clearLogs(request: BunRequest): Promise<Response> {
-  return guarded(request, true, () => {
+  return workspaceScoped(request, true, async (scope) => {
+    const admission = await admitWorkspaceWrite(scope.workspace.id);
+    if (!admission) return json({ error: "Workspace is unavailable." }, 409);
+    const logScope = logs.admitWorkspace(scope.workspace.id);
+    try {
+      return runWithWorkspaceScope(scope, () => {
+        logs.clear(logScope);
+        logs.record({ source: "console", event: "logs.cleared", message: "Workspace console history cleared by administrator" }, "INFO", {}, "server", logScope);
+        return json(logs.snapshot({ kind: "workspace", workspaceId: scope.workspace.id }));
+      });
+    } finally {
+      admission.release();
+    }
+  });
+}
+
+/** Explicit global log endpoint. Global routes never infer the workspace header. */
+export function readGlobalLogs(request: BunRequest): Promise<Response> {
+  return globalScoped(request, false, () => json(logs.snapshot()));
+}
+
+export function clearGlobalLogs(request: BunRequest): Promise<Response> {
+  return globalScoped(request, true, () => {
     logs.clear();
-    logs.record({ source: "console", event: "logs.cleared", message: "Console history cleared by administrator" });
+    logs.record({ source: "console", event: "logs.cleared", message: "Global system history cleared by administrator" });
     return json(logs.snapshot());
   });
+}
+
+async function globalScoped(
+  request: BunRequest,
+  mutate: boolean,
+  action: () => Response | Promise<Response>,
+): Promise<Response> {
+  try {
+    await requireGlobalRequestScope(request, { mutate });
+    return await action();
+  } catch (error) {
+    if (error instanceof RequestScopeError) return json({ error: error.message }, error.status);
+    return json({ error: "Console logs are temporarily unavailable." }, 503);
+  }
+}
+
+async function workspaceScoped(
+  request: BunRequest,
+  mutate: boolean,
+  action: (scope: Awaited<ReturnType<typeof requireWorkspaceRequestScope>>) => Response | Promise<Response>,
+): Promise<Response> {
+  try {
+    const scope = await requireWorkspaceRequestScope(request, { mutate });
+    return await action(scope);
+  } catch (error) {
+    if (error instanceof RequestScopeError) return json({ error: error.message }, error.status);
+    return json({ error: "Console logs are temporarily unavailable." }, 503);
+  }
 }
 
 let windowStart = 0;
@@ -76,7 +130,9 @@ export function reportBrowserEvent(request: BunRequest): Promise<Response> {
         typeof data.event !== "string" || !Object.hasOwn(browserEvents, data.event)) {
       return json({ error: "Unknown browser log event." }, 400);
     }
-    if (data.page !== undefined && !dashboardPages.some((page) => page === data.page)) return json({ error: "Invalid page." }, 400);
+    const event = data.event as BrowserEvent;
+    const scopeKind = browserEventScope(event, data.page);
+    if (!scopeKind) return json({ error: "Invalid page for browser log event." }, 400);
     const details: LogDetails = {};
     for (const key of ["added", "removed", "updated"] as const) {
       if (data[key] === undefined) continue;
@@ -87,9 +143,46 @@ export function reportBrowserEvent(request: BunRequest): Promise<Response> {
       if (typeof data.reordered !== "boolean") return json({ error: "Invalid order flag." }, 400);
       details.reordered = data.reordered;
     }
-    const event = data.event as BrowserEvent;
-    logs.record({ source: "dashboard", event, message: `${browserEvents[event]}${data.page ? ` (${data.page})` : ""}` },
-      event === "dashboard.error" || event === "dashboard.rejection" ? "ERROR" : event === "dashboard.copy-failed" ? "WARN" : "INFO", details, "browser");
+    const level = event === "dashboard.error" || event === "dashboard.rejection" ? "ERROR" : event === "dashboard.copy-failed" ? "WARN" : "INFO";
+    if (scopeKind === "global") {
+      logs.record({ source: "dashboard", event, message: `${browserEvents[event]}${data.page ? ` (${data.page})` : ""}` }, level, details, "browser");
+    } else {
+      let scope;
+      try { scope = await requireWorkspaceRequestScope(request, { mutate: true }); }
+      catch (error) {
+        if (error instanceof RequestScopeError) return json({ error: error.message }, error.status);
+        return json({ error: "Console logs are temporarily unavailable." }, 503);
+      }
+      const admission = await admitWorkspaceWrite(scope.workspace.id);
+      if (!admission) return json({ error: "Workspace is unavailable." }, 409);
+      try {
+        const logScope = logs.admitWorkspace(scope.workspace.id);
+        runWithWorkspaceScope(scope, () => logs.record(
+          { source: "dashboard", event, message: `${browserEvents[event]}${data.page ? ` (${data.page})` : ""}` },
+          level, details, "browser", logScope,
+        ));
+      } finally {
+        admission.release();
+      }
+    }
     return json({ success: true });
   });
 }
+
+const workspaceEvents = new Set<BrowserEvent>([
+  "providers.changed", "models.changed", "provider-keys.changed", "codex-models.changed", "codex-accounts.changed",
+  "aliases.changed", "combos.changed", "budgets.changed", "pricing.changed", "budgets.window", "budgets.unlimited",
+  "budgets.beyond-limits", "codex.authorize", "codex.credit", "logs.copied", "logs.paused", "logs.resumed",
+]);
+
+function browserEventScope(event: BrowserEvent, page: unknown): "global" | "workspace" | null {
+  if ((event === "dashboard.error" || event === "dashboard.rejection") && page === undefined) return "global";
+  if (page !== undefined && (typeof page !== "string" || (!globalPages.has(page) && !workspacePages.has(page)))) return null;
+  if (workspaceEvents.has(event)) return page === undefined || workspacePages.has(page) ? "workspace" : null;
+  if (event === "gateway-key.copied") return page === undefined || globalPages.has(page) ? "global" : null;
+  if (typeof page !== "string") return null;
+  return globalPages.has(page) ? "global" : "workspace";
+}
+
+const globalPages = new Set(["endpoint", "cliproxy", "settings"]);
+const workspacePages = new Set(["providers", "codex", "routing", "usage", "budgets", "pricing", "logs", "tool-overview", "tool-tools", "tool-connections", "tool-policies", "tool-activity", "tool-settings"]);

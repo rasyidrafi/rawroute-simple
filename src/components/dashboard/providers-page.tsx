@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { useLoggedState } from "@/hooks/use-logged-state";
 import {
   ArrowDownIcon,
   ArrowLeftIcon,
@@ -282,16 +281,16 @@ export function ProviderDetail({
   setProviders,
   models,
   setModels,
+  keyNames,
+  setKeyNames,
 }: {
   provider: Provider;
   setProviders: React.Dispatch<React.SetStateAction<Provider[]>>;
   models: Model[];
   setModels: React.Dispatch<React.SetStateAction<Model[]>>;
+  keyNames: string[];
+  setKeyNames: React.Dispatch<React.SetStateAction<string[]>>;
 }) {
-  const [keyNames, setKeyNames] = useLoggedState([
-    `${provider.name} primary`,
-    `${provider.name} standby`,
-  ], "provider-keys.changed");
   const [newKey, setNewKey] = useState("");
   const [modelOpen, setModelOpen] = useState(false);
   const [editingModel, setEditingModel] = useState<Model | null>(null);
@@ -521,7 +520,7 @@ function ProviderApiKeys({
           <CardTitle>API keys</CardTitle>
         </div>
         <CardDescription>
-          Priority is fill-first: the top enabled credential receives requests first.
+          Browser-only mock credential labels. Custom provider keys are not configured or persisted by RawRoute yet.
         </CardDescription>
       </CardHeader>
       <CardContent>

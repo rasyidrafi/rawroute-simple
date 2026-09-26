@@ -57,12 +57,14 @@ export function Routing({
   combos,
   setCombos,
   models,
+  workspaceId,
 }: {
   aliases: Alias[];
   setAliases: React.Dispatch<React.SetStateAction<Alias[]>>;
   combos: Combo[];
   setCombos: React.Dispatch<React.SetStateAction<Combo[]>>;
   models: Model[];
+  workspaceId: string;
 }) {
   const [editor, setEditor] = useState<Editor>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -202,7 +204,7 @@ export function Routing({
                       size="icon-sm"
                       variant="ghost"
                       aria-label={`Copy ${alias.name}`}
-                      onClick={() => copy(alias.name)}
+                      onClick={() => copy(alias.name, "Copied", { page: "routing", workspaceId })}
                     >
                       <CopyIcon />
                     </Button>
@@ -276,7 +278,7 @@ export function Routing({
                   </TableCell>
                   <TableCell>
                     <div className="flex justify-end gap-1">
-                      <Button size="icon-sm" variant="outline" aria-label={`Copy ${combo.name}`} onClick={() => copy(combo.name)}><CopyIcon /></Button>
+                      <Button size="icon-sm" variant="outline" aria-label={`Copy ${combo.name}`} onClick={() => copy(combo.name, "Copied", { page: "routing", workspaceId })}><CopyIcon /></Button>
                       <Button size="icon-sm" variant="outline" aria-label={`Edit ${combo.name}`} onClick={() => open("combo", combo)}><Settings2Icon /></Button>
                       <Button size="icon-sm" variant="destructive" aria-label={`Delete ${combo.name}`} onClick={() => setRemove({ type: "combo", id: combo.id, name: combo.name })}><Trash2Icon /></Button>
                     </div>

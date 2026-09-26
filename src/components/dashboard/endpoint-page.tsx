@@ -83,7 +83,7 @@ export function EndpointKeys() {
       reportEvent("gateway-key.copied");
       notify("CLIProxyAPI key copied");
     } catch {
-      reportEvent("dashboard.copy-failed");
+      reportEvent("dashboard.copy-failed", { page: "endpoint" });
       setKeyError("Clipboard access failed. Reveal the key to select and copy it manually.");
     }
   }
@@ -93,10 +93,10 @@ export function EndpointKeys() {
         <CardHeader>
           <div className="flex items-center gap-2">
             <RouteIcon className="size-5" />
-            <CardTitle>API Endpoint</CardTitle>
+            <CardTitle>Legacy global API endpoint</CardTitle>
           </div>
           <CardDescription>
-            OpenAI-compatible base URL on this same origin. Requests are forwarded to CLIProxyAPI when the managed service is installed and running.
+            OpenAI-compatible base URL on this same origin. This legacy native endpoint is global, not workspace-isolated, and forwards to CLIProxyAPI when the managed service is running.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -109,7 +109,7 @@ export function EndpointKeys() {
               size="icon-sm"
               variant="outline"
               aria-label="Copy API endpoint"
-              onClick={() => copy(endpoint, "Endpoint copied")}
+              onClick={() => copy(endpoint, "Endpoint copied", { page: "endpoint" })}
             >
               <CopyIcon />
             </Button>
@@ -118,16 +118,16 @@ export function EndpointKeys() {
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle>CLIProxyAPI key</CardTitle>
+          <CardTitle>Legacy global CLIProxyAPI key</CardTitle>
           <CardDescription>
-            Native proxy credential for authenticated API requests. This administrator-only secret is fetched on demand and hidden by default.
+            Global native proxy credential for authenticated API requests. It is administrator-only, fetched on demand, and has no workspace attribution.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex flex-col gap-3">
             <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-3 sm:flex-row sm:items-center">
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium">Administrator-managed credential</p>
+                <p className="text-sm font-medium">Administrator-managed global credential</p>
                 <code className="mt-1 block break-all text-xs text-muted-foreground">
                   {apiKey && keyVisible ? apiKey : "Hidden until explicitly revealed"}
                 </code>
@@ -148,7 +148,7 @@ export function EndpointKeys() {
               <p role="alert" className="text-sm text-destructive">{keyError}</p>
             )}
             <p className="text-xs text-muted-foreground">
-              Dashboard-created gateway keys are not supported and are not shown here. Use this native key as a Bearer token with the endpoint above.
+              Workspace gateway keys are not available yet. Use this legacy global native key as a Bearer token with the endpoint above.
             </p>
           </div>
         </CardContent>

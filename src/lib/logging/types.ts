@@ -1,5 +1,6 @@
 export type LogLevel = "INFO" | "WARN" | "ERROR";
 export type LogDetails = Record<string, number | boolean | null>;
+export type LogScopeKind = "global" | "workspace";
 
 export interface LogEvent {
   source: string;
@@ -12,10 +13,15 @@ export interface LogEntry extends LogEvent {
   time: string;
   level: LogLevel;
   origin: "server" | "browser";
+  /** Scope is structural metadata, never user-provided log details. */
+  scope: LogScopeKind;
+  workspaceId: string | null;
   details: LogDetails;
 }
 
 export interface LogSnapshot {
+  scope: LogScopeKind;
+  workspaceId: string | null;
   entries: LogEntry[];
   capacity: number;
   evicted: number;

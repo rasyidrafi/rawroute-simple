@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useLoggedState } from "@/hooks/use-logged-state";
 import { reportEvent } from "@/lib/logging/client";
 import { ArrowDownIcon, ArrowUpIcon, ExternalLinkIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { Confirm, notify, Page } from "@/components/dashboard/page-ui";
@@ -14,31 +13,21 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
-import type { CodexModel } from "@/mock/dashboard-data";
+import type { CodexAccount, CodexModel } from "@/mock/dashboard-data";
 
 export function CodexProviders({
   models,
   setModels,
+  accounts,
+  setAccounts,
+  workspaceId,
 }: {
   models: CodexModel[];
   setModels: React.Dispatch<React.SetStateAction<CodexModel[]>>;
+  accounts: CodexAccount[];
+  setAccounts: React.Dispatch<React.SetStateAction<CodexAccount[]>>;
+  workspaceId: string;
 }) {
-  const [accounts, setAccounts] = useLoggedState([
-    {
-      id: "codex-work",
-      name: "Work Codex",
-      plan: "Team",
-      enabled: true,
-      quota: 62,
-    },
-    {
-      id: "codex-personal",
-      name: "Personal Codex",
-      plan: "Plus",
-      enabled: true,
-      quota: 28,
-    },
-  ], "codex-accounts.changed");
   const [connect, setConnect] = useState(false);
   const [remove, setRemove] = useState<string | null>(null);
   return (
@@ -148,7 +137,7 @@ export function CodexProviders({
                         variant="outline"
                         disabled={account.quota > 0}
                         onClick={() => {
-                          reportEvent("codex.credit");
+                          reportEvent("codex.credit", { workspaceId });
                           notify("Codex reset credit redeemed");
                         }}
                       >
@@ -220,7 +209,7 @@ export function CodexProviders({
           <div className="space-y-3">
             <Button
               variant="outline"
-              onClick={() => { reportEvent("codex.authorize"); notify("Mock device authorization started", "info"); }}
+              onClick={() => { reportEvent("codex.authorize", { workspaceId }); notify("Mock device authorization started", "info"); }}
             >
               <ExternalLinkIcon />
               Open Codex sign-in

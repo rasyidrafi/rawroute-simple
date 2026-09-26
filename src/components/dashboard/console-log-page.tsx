@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { ClipboardIcon, RefreshCwIcon, SearchIcon, Trash2Icon } from "lucide-react";
 import { cn } from "cn";
-import { Confirm, copy, notify, Page } from "@/components/dashboard/page-ui";
+import { Confirm, copy, notify } from "@/components/dashboard/page-ui";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { FieldError } from "@/components/ui/field";
@@ -16,12 +16,27 @@ import { useConsoleLogs } from "@/hooks/use-console-logs";
 import { reportEvent } from "@/lib/logging/client";
 import { formatLog, type LogEntry, type LogSnapshot } from "@/lib/logging/types";
 
-export function ConsoleLog() {
+export function ConsoleLog({ workspaceId }: { workspaceId: string }) {
+  return <LogPanel scope={{ kind: "workspace", workspaceId }} title="Console Log" description="Workspace console history is isolated from every other workspace and retained in memory until the server restarts." />;
+}
+
+export function SystemLogPanel() {
+  return <LogPanel scope={{ kind: "global" }} title="System Logs" description="Global administrator, CLIProxy, authentication, and legacy native gateway history. This is distinct from every workspace console." compact />;
+}
+
+function LogPanel({
+  scope, title, description, compact = false,
+}: {
+  scope: { kind: "workspace"; workspaceId: string } | { kind: "global" };
+  title: string;
+  description: string;
+  compact?: boolean;
+}) {
   const [query, setQuery] = useState("");
   const [level, setLevel] = useState("ALL");
   const [live, setLive] = useState(true);
   const [confirmClear, setConfirmClear] = useState(false);
-  const { snapshot, error, busy, refresh, clear } = useConsoleLogs(live);
+  const { snapshot, error, busy, refresh, clear } = useConsoleLogs(live, scope);
   const entries = snapshot?.entries ?? [];
   const visible = entries.filter((entry) =>
     (level === "ALL" || entry.level === level) && formatLog(entry).toLowerCase().includes(query.toLowerCase()));
@@ -32,14 +47,15 @@ export function ConsoleLog() {
   }
 
   return (
-    <Page>
+    <main className={compact ? "min-w-0" : "flex-1 bg-[#f6f5f1] p-4 dark:bg-background md:p-6 lg:p-8"}>
+      <div className={compact ? "" : "mx-auto flex max-w-7xl flex-col gap-8"}>
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex flex-col gap-2">
-              <CardTitle>Console Log</CardTitle>
+              <CardTitle>{title}</CardTitle>
               <CardDescription>
-                Recent server and dashboard events. Keeps the latest {snapshot?.capacity.toLocaleString() ?? "2,000"} entries in memory until the server restarts.
+                {description} Keeps the latest {snapshot?.capacity.toLocaleString() ?? "2,000"} entries in this scope.
               </CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -47,7 +63,9 @@ export function ConsoleLog() {
                 <RefreshCwIcon data-icon="inline-start" />{busy ? "Loading…" : "Refresh"}
               </Button>
               <Button size="sm" variant="outline" disabled={!visible.length} onClick={async () => {
-                if (await copy(visible.map(formatLog).join("\n"), "Logs copied")) reportEvent("logs.copied");
+                if (await copy(visible.map(formatLog).join("\n"), "Logs copied", { page: scope.kind === "workspace" ? "logs" : "cliproxy", workspaceId: scope.kind === "workspace" ? scope.workspaceId : null })) {
+                  if (scope.kind === "workspace") reportEvent("logs.copied", { workspaceId: scope.workspaceId });
+                }
               }}>
                 <ClipboardIcon data-icon="inline-start" />Copy
               </Button>
@@ -74,7 +92,7 @@ export function ConsoleLog() {
                 <label className="flex items-center gap-2 whitespace-nowrap text-sm">
                   <Switch checked={live} onCheckedChange={(value) => {
                     setLive(value);
-                    reportEvent(value ? "logs.resumed" : "logs.paused");
+                    if (scope.kind === "workspace") reportEvent(value ? "logs.resumed" : "logs.paused", { workspaceId: scope.workspaceId });
                     if (value) void refresh();
                   }} />
                   {live ? "Live" : "Paused"}
@@ -91,9 +109,10 @@ export function ConsoleLog() {
         </CardContent>
       </Card>
       <Confirm open={confirmClear} onOpenChange={setConfirmClear} title="Clear console log?"
-        description="This removes all retained log history for every administrator, including entries hidden by filters. A history-cleared event will remain."
+        description={`This removes all retained ${scope.kind === "workspace" ? "workspace" : "global system"} history for every administrator, including entries hidden by filters. A history-cleared event will remain.`}
         onConfirm={() => void clearHistory()} />
-    </Page>
+      </div>
+    </main>
   );
 }
 

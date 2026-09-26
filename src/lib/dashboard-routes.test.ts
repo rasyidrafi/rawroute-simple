@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { dashboardPage, dashboardPaths, providerIdFromPath } from "./dashboard-routes";
+import { dashboardPage, dashboardPaths, dashboardRouteMeta, providerIdFromPath } from "./dashboard-routes";
 
 test("each dashboard URL has a stable page ID and provider detail has a bounded segment", () => {
   for (const [id, path] of Object.entries(dashboardPaths)) expect(dashboardPage(path) === id).toBe(true);
@@ -8,6 +8,14 @@ test("each dashboard URL has a stable page ID and provider detail has a bounded 
   expect(dashboardPage("/dashboard/tools/no-such-tool")).toBeUndefined();
   expect(dashboardPage("/api/auth/status")).toBeUndefined();
   expect(dashboardPage("/v1/models")).toBeUndefined();
+});
+
+test("route scope metadata keeps global lifecycle pages out of workspace scope", () => {
+  expect(dashboardRouteMeta.endpoint.scope).toBe("global");
+  expect(dashboardRouteMeta.cliproxy.scope).toBe("global");
+  expect(dashboardRouteMeta.settings.scope).toBe("global");
+  expect(dashboardRouteMeta.logs.scope).toBe("workspace");
+  expect(dashboardRouteMeta.providers.scope).toBe("workspace");
 });
 
 test("provider detail URLs decode exactly once, including encoded slashes", () => {

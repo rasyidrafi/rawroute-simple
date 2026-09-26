@@ -18,6 +18,31 @@ export const dashboardPaths = {
 } as const;
 
 export type DashboardRoute = keyof typeof dashboardPaths;
+export type DashboardPageScope = "global" | "workspace";
+
+/**
+ * Routing scope is presentation metadata today. The next console/resource
+ * slices reuse it to choose an explicit workspace request scope.
+ */
+export const dashboardRouteMeta: Record<DashboardRoute, { scope: DashboardPageScope }> = {
+  endpoint: { scope: "global" },
+  providers: { scope: "workspace" },
+  codex: { scope: "workspace" },
+  routing: { scope: "workspace" },
+  usage: { scope: "workspace" },
+  budgets: { scope: "workspace" },
+  pricing: { scope: "workspace" },
+  logs: { scope: "workspace" },
+  cliproxy: { scope: "global" },
+  settings: { scope: "global" },
+  "tool-overview": { scope: "workspace" },
+  "tool-tools": { scope: "workspace" },
+  "tool-connections": { scope: "workspace" },
+  "tool-policies": { scope: "workspace" },
+  "tool-activity": { scope: "workspace" },
+  "tool-settings": { scope: "workspace" },
+};
+
 export const dashboardAliases = ["/", "/dashboard", "/dashboard/ai", "/dashboard/tools"] as const;
 export const providerDetailPath = "/dashboard/ai/providers/:providerId";
 

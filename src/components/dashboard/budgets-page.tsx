@@ -30,10 +30,12 @@ export function Budgets({
   budgets,
   setBudgets,
   keys,
+  workspaceId,
 }: {
   budgets: Budget[];
   setBudgets: React.Dispatch<React.SetStateAction<Budget[]>>;
   keys: GatewayKey[];
+  workspaceId: string;
 }) {
   const [keyId, setKeyId] = useState("");
   const [limit, setLimit] = useState("50");
@@ -119,7 +121,7 @@ export function Budgets({
               setWindowStart(windowStartDraft);
               setWindowEnd(windowEndDraft);
               setWindowOpen(false);
-              reportEvent("budgets.window");
+               reportEvent("budgets.window", { workspaceId });
               notify("Mock budget window updated");
             }}>Save window</Button>
           </DialogFooter>
@@ -243,7 +245,7 @@ export function Budgets({
               <TabsContent value="beyond" className="mt-4">
                 <div className="rounded-lg border p-4">
                   <div className="flex items-center gap-3">
-                    <Switch checked={beyondLimits} onCheckedChange={(value) => { setBeyondLimits(value); reportEvent("budgets.beyond-limits"); }} aria-label="Enable Beyond Limits" />
+                    <Switch checked={beyondLimits} onCheckedChange={(value) => { setBeyondLimits(value); reportEvent("budgets.beyond-limits", { workspaceId }); }} aria-label="Enable Beyond Limits" />
                     <div>
                       <div className="font-medium">Beyond Limits</div>
                       <p className="text-sm text-muted-foreground">
@@ -303,6 +305,7 @@ export function Budgets({
         editLimit={editLimit}
         setEditLimit={setEditLimit}
         setBudgets={setBudgets}
+        workspaceId={workspaceId}
       />
     </Page>
   );
@@ -386,6 +389,7 @@ function BudgetDialogs({
   editLimit,
   setEditLimit,
   setBudgets,
+  workspaceId,
 }: {
   unlimited: boolean;
   setUnlimited: React.Dispatch<React.SetStateAction<boolean>>;
@@ -398,6 +402,7 @@ function BudgetDialogs({
   editLimit: string;
   setEditLimit: React.Dispatch<React.SetStateAction<string>>;
   setBudgets: React.Dispatch<React.SetStateAction<Budget[]>>;
+  workspaceId: string;
 }) {
   return (
     <>
@@ -409,7 +414,7 @@ function BudgetDialogs({
         onConfirm={() => {
           setUnlimited((value) => !value);
           setConfirmUnlimited(false);
-          reportEvent("budgets.unlimited");
+          reportEvent("budgets.unlimited", { workspaceId });
           notify("Unlimited Mode updated");
         }}
       />

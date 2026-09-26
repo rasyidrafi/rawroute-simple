@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { BrowserRouter } from "react-router";
 import { LoginForm } from "@/components/login-form";
 import { DashboardShell } from "@/components/dashboard/dashboard-shell";
+import { WorkspaceProvider } from "@/components/workspace-provider";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Spinner } from "@/components/ui/spinner";
 import "./index.css";
@@ -164,12 +165,14 @@ function AuthenticatedApp() {
 
   if (isAuthenticated) {
     return (
-      <DashboardShell
-        onLogout={handleLogout}
-        onPasswordChanged={handlePasswordChanged}
-        isDefaultPassword={isDefaultPassword}
-        logoutError={authError}
-      />
+      <WorkspaceProvider>
+        <DashboardShell
+          onLogout={handleLogout}
+          onPasswordChanged={handlePasswordChanged}
+          isDefaultPassword={isDefaultPassword}
+          logoutError={authError}
+        />
+      </WorkspaceProvider>
     );
   }
 

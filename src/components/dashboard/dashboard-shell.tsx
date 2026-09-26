@@ -4,7 +4,8 @@ import { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { reportEvent } from "@/lib/logging/client";
 import { AppSidebar } from "@/components/app-sidebar";
-import { dashboardPage, dashboardPaths, providerIdFromPath, type DashboardRoute } from "@/lib/dashboard-routes";
+import { useWorkspace } from "@/components/workspace-provider";
+import { dashboardPage, dashboardPaths, dashboardRouteMeta, providerIdFromPath, type DashboardRoute } from "@/lib/dashboard-routes";
 import { PasswordChangeForm } from "@/components/dashboard/password-change-form";
 import { DashboardViews } from "@/components/dashboard/views";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -22,6 +23,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { Badge } from "@/components/ui/badge";
 
 const titles: Record<DashboardRoute, string> = {
   endpoint: "Endpoint & Key",
@@ -83,13 +85,20 @@ function DashboardContent({
   const route: DashboardRoute = page === "provider-detail" ? "providers" : page ?? "endpoint";
   const providerId = page === "provider-detail" ? providerIdFromPath(location.pathname) : undefined;
   const toolRoute = route.startsWith("tool-");
+  const { activeWorkspace, activeWorkspaceId, isLoading: isWorkspaceLoading } = useWorkspace();
+  const scope = dashboardRouteMeta[route].scope;
 
   useEffect(() => {
-    if (page) reportEvent("dashboard.navigation", { page: route });
-  }, [location.pathname, page, route]);
+    if (page) reportEvent("dashboard.navigation", {
+      page: route,
+      workspaceId: dashboardRouteMeta[route].scope === "workspace" ? activeWorkspaceId : null,
+    });
+  }, [activeWorkspaceId, location.pathname, page, route]);
 
   useEffect(() => {
     if (isDefaultPassword) return;
+    // Browser-global errors have no reliable operation provenance. Keeping them
+    // global avoids falsely assigning a delayed error from workspace A to B.
     const onError = () => reportEvent("dashboard.error");
     const onRejection = () => reportEvent("dashboard.rejection");
     window.addEventListener("error", onError);
@@ -120,7 +129,7 @@ function DashboardContent({
             <header className="sticky top-0 z-30 flex h-[var(--header-height)] shrink-0 items-center border-b bg-background/90 backdrop-blur-md">
               <div className="flex w-full items-center gap-3 px-4 lg:px-6">
                 <SidebarTrigger className="-ml-1" />
-                <h1 className="min-w-0 truncate text-sm font-medium">
+                 <h1 className="min-w-0 truncate text-sm font-medium">
                   {toolRoute ? (
                     <>
                       <span className="text-muted-foreground">Tool Gateway</span>
@@ -130,8 +139,19 @@ function DashboardContent({
                   ) : (
                     titles[route]
                   )}
-                </h1>
-                <ThemeToggle className="ml-auto" />
+                 </h1>
+                 <Badge variant="outline" className="hidden sm:inline-flex">
+                   {scope === "global"
+                      ? "Global"
+                      : activeWorkspace
+                        ? route === "logs"
+                          ? "Workspace"
+                          : "Workspace mock · browser only"
+                       : isWorkspaceLoading
+                         ? "Loading workspace"
+                         : "Workspace unavailable"}
+                 </Badge>
+                 <ThemeToggle className="ml-auto" />
               </div>
             </header>
             <DashboardViews

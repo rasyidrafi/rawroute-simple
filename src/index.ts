@@ -17,19 +17,29 @@ import {
 import { initCliproxy, shutdownCliproxy } from "./lib/cliproxy";
 import { checkDatabaseConnection } from "./lib/db";
 import { env } from "./lib/env";
-import { clearLogs, readLogs, reportBrowserEvent } from "./lib/logging/http";
+import { clearGlobalLogs, clearLogs, readGlobalLogs, readLogs, reportBrowserEvent } from "./lib/logging/http";
 import { loggedGateway, loggedRequest } from "./lib/logging/request";
 import { logs } from "./lib/logging/store";
 import { dashboardAliases, dashboardPage, dashboardPaths } from "./lib/dashboard-routes";
+import { ensureWorkspaceSchema, recoverInterruptedWorkspaceDeletions, registerWorkspaceDeletionExtension } from "./lib/workspaces";
+import { deleteWorkspaceHttp, getWorkspaces, patchWorkspace, postWorkspace } from "./lib/workspaces-http";
 
 // All new API handlers should use this registration helper. Polling endpoints
 // log failures only so watching the dashboard does not flood the console.
 function tracked(source: string, event: string, message: string, handler: Parameters<typeof loggedRequest>[1], failuresOnly = false) {
-  return loggedRequest({ source, event, message }, handler, failuresOnly);
+  // Every currently registered HTTP route is an administrator/global or legacy
+  // route. Future workspace APIs must opt in through an explicit scoped wrapper.
+  return loggedRequest({ source, event, message }, handler, { failuresOnly, scope: "global" });
 }
 
 await ensureAuthSchema();
 await ensureDefaultPassword();
+await ensureWorkspaceSchema();
+await recoverInterruptedWorkspaceDeletions();
+registerWorkspaceDeletionExtension({
+  name: "workspace-console-logs",
+  deleteWorkspaceData: (workspaceId) => logs.deleteWorkspace(workspaceId),
+});
 
 const server = serve({
   port: env.port,
@@ -64,7 +74,12 @@ const server = serve({
     "/api/auth/logout": { POST: tracked("auth", "auth.logout", "Sign-out request", logout) },
     "/api/auth/password": { POST: tracked("auth", "auth.password.change", "Password-change request (success revokes all sessions)", changePassword) },
     "/api/auth/status": { GET: tracked("auth", "auth.status", "Session status request", status, true) },
+    // Workspace management is global. It deliberately ignores workspace scope
+    // headers; future scoped resources must use requireWorkspaceRequestScope.
+    "/api/workspaces": { GET: tracked("workspace", "workspace.list", "Workspace list request", getWorkspaces), POST: tracked("workspace", "workspace.create", "Workspace creation request", postWorkspace) },
+    "/api/workspaces/:workspaceId": { PATCH: tracked("workspace", "workspace.rename", "Workspace rename request", patchWorkspace), DELETE: tracked("workspace", "workspace.delete", "Workspace deletion request", deleteWorkspaceHttp) },
     "/api/logs": { GET: readLogs, DELETE: clearLogs },
+    "/api/logs/global": { GET: readGlobalLogs, DELETE: clearGlobalLogs },
     "/api/logs/events": { POST: reportBrowserEvent },
     "/api/cliproxy/status": { GET: tracked("cliproxy", "cliproxy.status", "CLIProxy status request", cliproxyStatus, true) },
     "/api/cliproxy/versions": { GET: tracked("cliproxy", "cliproxy.versions", "CLIProxy version list request", cliproxyVersions) },

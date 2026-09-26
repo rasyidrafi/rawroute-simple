@@ -23,6 +23,14 @@ export type Model = {
   enabled: boolean;
 };
 export type CodexModel = { id: string; name: string; enabled: boolean };
+export type CodexAccount = {
+  id: string;
+  name: string;
+  plan: string;
+  enabled: boolean;
+  quota: number;
+};
+export type ProviderCredentialLabels = { providerId: string; labels: string[] };
 export type Alias = {
   id: string;
   name: string;
@@ -162,6 +170,19 @@ export const initialCodexModels: CodexModel[] = [
   { id: "openai/gpt-5-codex", name: "GPT-5 Codex", enabled: true },
   { id: "openai/gpt-5.1-codex", name: "GPT-5.1 Codex", enabled: true },
   { id: "openai/gpt-5.1-codex-mini", name: "GPT-5.1 Codex mini", enabled: true },
+];
+
+// Browser-only fixture labels. These are not secrets or configured credentials.
+export const initialCodexAccounts: CodexAccount[] = [
+  { id: "codex-work", name: "Work Codex", plan: "Team", enabled: true, quota: 62 },
+  { id: "codex-personal", name: "Personal Codex", plan: "Plus", enabled: true, quota: 28 },
+];
+
+export const initialProviderCredentialLabels: ProviderCredentialLabels[] = [
+  { providerId: "openai", labels: ["OpenAI primary", "OpenAI standby"] },
+  { providerId: "anthropic", labels: ["Anthropic primary", "Anthropic standby"] },
+  { providerId: "groq", labels: ["Groq primary", "Groq standby"] },
+  { providerId: "ollama", labels: ["Local Ollama primary", "Local Ollama standby"] },
 ];
 
 export const initialAliases: Alias[] = [

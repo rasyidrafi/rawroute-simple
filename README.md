@@ -9,6 +9,12 @@ filters, search, copy, and shared history clearing. It retains the latest 2,000
 events in memory for the running server; restarting the server resets the history.
 See [Logging](docs/logging.md) for event coverage and how to instrument new features.
 
+Workspace persistence and the scoped API contract are documented in
+[Workspaces](docs/workspaces.md). Workspace console history is isolated in the
+running server. Provider, OAuth, routing, pricing, and other dashboard controls
+remain browser-only workspace mock fixtures until their persisted APIs are added.
+CLIProxy lifecycle and the native `/v1` gateway remain global.
+
 ## Private Testing
 
 From the repository root:

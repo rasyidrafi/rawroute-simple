@@ -12,7 +12,7 @@ const { db: testDb } = await import("./db");
 const auth = await import("./auth");
 const { env } = await import("./env");
 const { cliproxyStatus } = await import("./cliproxy/http");
-const { readLogs, clearLogs, reportBrowserEvent } = await import("./logging/http");
+const { clearGlobalLogs, readGlobalLogs, reportBrowserEvent } = await import("./logging/http");
 const { logs } = await import("./logging/store");
 
 type TestRequest = BunRequest & {
@@ -568,24 +568,24 @@ test("password change requires an authenticated session", async () => {
 test("console history requires a non-default session and same-origin mutations", async () => {
   logs.clear();
   logs.record({ source: "test", event: "test.private", message: "Private administrator event" });
-  expect((await readLogs(makeRequest("/api/logs"))).status).toBe(401);
+  expect((await readGlobalLogs(makeRequest("/api/logs/global"))).status).toBe(401);
   const initial = await login();
-  expect((await readLogs(makeRequest("/api/logs", { sessionToken: initial.token }))).status).toBe(403);
+  expect((await readGlobalLogs(makeRequest("/api/logs/global", { sessionToken: initial.token }))).status).toBe(403);
   await auth.changePassword(passwordRequest(initial.token, DEFAULT_PASSWORD, "Log-test-strong-password-1"));
   const session = await login("Log-test-strong-password-1");
-  const response = await readLogs(makeRequest("/api/logs", { sessionToken: session.token }));
+  const response = await readGlobalLogs(makeRequest("/api/logs/global", { sessionToken: session.token }));
   expect(response.status).toBe(200);
   expect(response.headers.get("cache-control")).toBe("no-store");
   expect(JSON.stringify(await responseBody(response))).toContain("Private administrator event");
   for (const origin of [null, "https://other.example"]) {
-    expect((await clearLogs(makeRequest("/api/logs", { method: "DELETE", origin, sessionToken: session.token }))).status).toBe(403);
+    expect((await clearGlobalLogs(makeRequest("/api/logs/global", { method: "DELETE", origin, sessionToken: session.token }))).status).toBe(403);
   }
   expect(logs.snapshot().entries).toHaveLength(1);
-  const cleared = await clearLogs(makeRequest("/api/logs", { method: "DELETE", sessionToken: session.token }));
+  const cleared = await clearGlobalLogs(makeRequest("/api/logs/global", { method: "DELETE", sessionToken: session.token }));
   expect(cleared.status).toBe(200);
   expect(logs.snapshot().entries.map((entry) => entry.event)).toEqual(["logs.cleared"]);
   await auth.logout(makeRequest("/api/auth/logout", { method: "POST", sessionToken: session.token }));
-  expect((await readLogs(makeRequest("/api/logs", { sessionToken: session.token }))).status).toBe(401);
+  expect((await readGlobalLogs(makeRequest("/api/logs/global", { sessionToken: session.token }))).status).toBe(401);
 });
 
 test("browser event intake rejects forged messages, secrets, invalid types and oversized bodies", async () => {
@@ -606,10 +606,10 @@ test("browser event intake rejects forged messages, secrets, invalid types and o
   }
   expect(logs.snapshot().entries).toHaveLength(0);
   const report = () => makeRequest("/api/logs/events", {
-    sessionToken: session.token, body: JSON.stringify({ event: "providers.changed", added: 1 }),
+    sessionToken: session.token, body: JSON.stringify({ event: "gateway-key.copied", added: 1 }),
   });
   expect((await reportBrowserEvent(report())).status).toBe(200);
-  expect(logs.snapshot().entries[0]).toMatchObject({ event: "providers.changed", origin: "browser", details: { added: 1 } });
+  expect(logs.snapshot().entries[0]).toMatchObject({ event: "gateway-key.copied", origin: "browser", scope: "global", workspaceId: null, details: { added: 1 } });
   for (let index = 0; index < 120; index++) await reportBrowserEvent(report());
   expect((await reportBrowserEvent(report())).status).toBe(429);
 });

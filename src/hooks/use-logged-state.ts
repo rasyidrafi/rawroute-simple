@@ -4,7 +4,7 @@ import { collectionChanges } from "@/lib/logging/collection";
 import type { BrowserEvent } from "@/lib/logging/types";
 
 /** Observe committed collection changes; never emit side effects in a React updater. */
-export function useLoggedState<T>(initial: T[], event: BrowserEvent) {
+export function useLoggedState<T>(initial: T[], event: BrowserEvent, scope: { page?: string; workspaceId?: string | null } = {}) {
   const [value, setValue] = useState(initial);
   const previous = useRef(value);
   useEffect(() => {
@@ -12,7 +12,7 @@ export function useLoggedState<T>(initial: T[], event: BrowserEvent) {
     previous.current = value;
     if (before === value) return;
     const { added, removed, updated, reordered } = collectionChanges(before, value);
-    if (added || removed || updated || reordered) reportEvent(event, { added, removed, updated, reordered });
-  }, [value, event]);
+    if (added || removed || updated || reordered) reportEvent(event, { added, removed, updated, reordered, ...scope });
+  }, [value, event, scope]);
   return [value, setValue] as const;
 }

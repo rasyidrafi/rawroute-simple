@@ -2,7 +2,9 @@
 
 import { useState, type ComponentProps, type Dispatch, type SetStateAction } from "react";
 import { Link, useLocation } from "react-router";
+import { useWorkspace } from "@/components/workspace-provider";
 import { dashboardPaths, type DashboardRoute } from "@/lib/dashboard-routes";
+import type { Workspace } from "@/lib/workspace-api";
 import {
   ActivityIcon,
   ArrowLeftRightIcon,
@@ -55,6 +57,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   Sidebar,
@@ -69,9 +72,15 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { Spinner } from "@/components/ui/spinner";
 
 type Item = { route: DashboardRoute; title: string; icon: LucideIcon };
 type Group = { label: string; items: Item[] };
+
+const globalItems: Item[] = [
+  { route: "cliproxy", title: "CLIProxyAPI", icon: TerminalIcon },
+  { route: "settings", title: "Settings", icon: SettingsIcon },
+];
 
 const aiGroups: Group[] = [
   {
@@ -91,14 +100,8 @@ const aiGroups: Group[] = [
       { route: "pricing", title: "Model Pricing", icon: DollarSignIcon },
     ],
   },
-  {
-    label: "System",
-    items: [
-      { route: "cliproxy", title: "CLIProxyAPI", icon: TerminalIcon },
-      { route: "logs", title: "Console Log", icon: LogsIcon },
-      { route: "settings", title: "Settings", icon: SettingsIcon },
-    ],
-  },
+  { label: "System", items: [{ route: "logs", title: "Console Log", icon: LogsIcon }] },
+  { label: "Global", items: globalItems },
 ];
 
 const toolGroups: Group[] = [
@@ -113,10 +116,11 @@ const toolGroups: Group[] = [
       { route: "tool-settings", title: "Settings", icon: SettingsIcon },
     ],
   },
-  aiGroups[2],
+  { label: "System", items: [{ route: "logs", title: "Console Log", icon: LogsIcon }] },
+  { label: "Global", items: globalItems },
 ];
 
-type Workspace = { id: string; name: string; default?: boolean };
+type WorkspaceDialog = "create" | "rename" | "delete" | null;
 
 export function AppSidebar({
   route,
@@ -131,55 +135,80 @@ export function AppSidebar({
   const { isMobile, setOpenMobile } = useSidebar();
   const location = useLocation();
   const app = location.pathname.startsWith("/dashboard/tools/") ? "tool" : "ai";
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([
-    { id: "default", name: "Default", default: true },
-    { id: "growth", name: "Growth Lab" },
-  ]);
-  const [workspaceId, setWorkspaceId] = useState("default");
-  const [workspaceDialog, setWorkspaceDialog] = useState<
-    "create" | "rename" | "delete" | null
-  >(null);
+  const {
+    workspaces,
+    activeWorkspaceId,
+    activeWorkspace,
+    isLoading,
+    error,
+    selectWorkspace,
+    reload,
+    createWorkspace,
+    renameWorkspace,
+    deleteWorkspace,
+  } = useWorkspace();
+  const [workspaceDialog, setWorkspaceDialog] = useState<WorkspaceDialog>(null);
+  const [workspaceTarget, setWorkspaceTarget] = useState<Workspace | null>(null);
   const [workspaceName, setWorkspaceName] = useState("");
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [savingWorkspace, setSavingWorkspace] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
-  const workspace =
-    workspaces.find((item) => item.id === workspaceId) ?? workspaces[0];
   const groups = app === "ai" ? aiGroups : toolGroups;
+  const workspaceLabel = activeWorkspace?.name ?? (isLoading ? "Loading workspaces…" : "Workspaces unavailable");
 
   function navigate(next: DashboardRoute) {
     onNavigate(next);
     if (isMobile) setOpenMobile(false);
   }
 
-  function saveWorkspace() {
-    const name = workspaceName.trim();
-    if (!name) return;
-    if (workspaceDialog === "create") {
-      const id = `workspace-${Date.now()}`;
-      setWorkspaces((current) => [...current, { id, name }]);
-      setWorkspaceId(id);
-      toast.add({ title: "Workspace created", type: "success" });
-    }
-    if (workspaceDialog === "rename") {
-      setWorkspaces((current) =>
-        current.map((item) =>
-          item.id === workspace.id ? { ...item, name } : item,
-        ),
-      );
-      toast.add({ title: "Workspace renamed", type: "success" });
-    }
-    setWorkspaceDialog(null);
+  function openWorkspaceDialog(dialog: Exclude<WorkspaceDialog, null>) {
+    const target = dialog === "create" ? null : activeWorkspace;
+    if (dialog !== "create" && !target) return;
+    setWorkspaceTarget(target);
+    setWorkspaceName(dialog === "rename" ? target?.name ?? "" : "");
+    setDeleteConfirmation("");
+    setWorkspaceError(null);
+    setWorkspaceDialog(dialog);
   }
 
-  function deleteWorkspace() {
-    setWorkspaces((current) =>
-      current.filter((item) => item.id !== workspace.id),
-    );
-    setWorkspaceId("default");
-    setWorkspaceDialog(null);
-    navigate("endpoint");
-    toast.add({ title: "Workspace deleted", type: "success" });
+  async function saveWorkspace() {
+    const name = workspaceName.trim();
+    if (!name) return;
+    const targetId = workspaceTarget?.id;
+    setSavingWorkspace(true);
+    setWorkspaceError(null);
+    try {
+      if (workspaceDialog === "create") {
+        await createWorkspace(name);
+        toast.add({ title: "Workspace created", type: "success" });
+      } else if (workspaceDialog === "rename" && targetId) {
+        await renameWorkspace(targetId, name);
+        toast.add({ title: "Workspace renamed", type: "success" });
+      }
+      setWorkspaceDialog(null);
+    } catch (saveError) {
+      setWorkspaceError(saveError instanceof Error ? saveError.message : "Unable to save workspace.");
+    } finally {
+      setSavingWorkspace(false);
+    }
+  }
+
+  async function removeWorkspace() {
+    const target = workspaceTarget;
+    if (!target || deleteConfirmation !== target.name) return;
+    setSavingWorkspace(true);
+    setWorkspaceError(null);
+    try {
+      await deleteWorkspace(target.id, deleteConfirmation);
+      setWorkspaceDialog(null);
+      toast.add({ title: "Workspace deleted", type: "success" });
+    } catch (deleteError) {
+      setWorkspaceError(deleteError instanceof Error ? deleteError.message : "Unable to delete workspace.");
+    } finally {
+      setSavingWorkspace(false);
+    }
   }
 
   return (
@@ -193,104 +222,53 @@ export function AppSidebar({
                   render={
                     <SidebarMenuButton
                       size="lg"
-                      tooltip={`${workspace.name} - ${app === "ai" ? "AI Gateway" : "Tool Gateway"}`}
+                      tooltip={`${workspaceLabel} - ${app === "ai" ? "AI Gateway" : "Tool Gateway"}`}
                     >
-                    <span className="flex size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                      <RouteIcon className="size-4" />
-                    </span>
-                    <span className="grid flex-1 text-left text-sm leading-tight">
-                      <span className="truncate font-semibold">RawRoute</span>
-                      <span className="truncate text-xs">
-                        {workspace.name} ·{" "}
-                        {app === "ai" ? "AI Gateway" : "Tool Gateway"}
+                      <span className="flex size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+                        <RouteIcon />
                       </span>
-                    </span>
-                    <ChevronDownIcon className="ml-auto size-4 text-muted-foreground" />
+                      <span className="grid flex-1 text-left text-sm leading-tight">
+                        <span className="truncate font-semibold">RawRoute</span>
+                        <span className="truncate text-xs">{workspaceLabel} · {app === "ai" ? "AI Gateway" : "Tool Gateway"}</span>
+                      </span>
+                      <ChevronDownIcon className="ml-auto text-muted-foreground" />
                     </SidebarMenuButton>
                   }
                 />
-                <DropdownMenuContent
-                  className="w-64"
-                  align="start"
-                  side={isMobile ? "bottom" : "right"}
-                >
+                <DropdownMenuContent className="w-64" align="start" side={isMobile ? "bottom" : "right"}>
                   <DropdownMenuGroup>
                     <DropdownMenuLabel>Workspaces</DropdownMenuLabel>
-                    <DropdownMenuRadioGroup
-                      value={workspaceId}
-                      onValueChange={setWorkspaceId}
-                    >
-                      {workspaces.map((item) => (
-                        <DropdownMenuRadioItem key={item.id} value={item.id}>
-                          <span className="flex size-7 items-center justify-center rounded-md border bg-background">
-                            <RouteIcon className="size-3.5" />
-                          </span>
-                          <span>{item.name}</span>
-                        </DropdownMenuRadioItem>
-                      ))}
-                    </DropdownMenuRadioGroup>
-                    <DropdownMenuItem
-                      onClick={() => {
-                        setWorkspaceName("");
-                        setWorkspaceDialog("create");
-                      }}
-                    >
-                      <span className="flex size-7 items-center justify-center rounded-md border bg-background">
-                        <PlusIcon className="size-4" />
-                      </span>
-                      Add New Workspace
+                    {isLoading ? (
+                      <DropdownMenuItem disabled><Spinner data-icon="inline-start" />Loading workspaces…</DropdownMenuItem>
+                    ) : error ? (
+                      <DropdownMenuItem onClick={() => void reload()}>Retry loading workspaces</DropdownMenuItem>
+                    ) : (
+                      <DropdownMenuRadioGroup value={activeWorkspaceId ?? ""} onValueChange={selectWorkspace}>
+                        {workspaces.map((workspace) => (
+                          <DropdownMenuRadioItem key={workspace.id} value={workspace.id} disabled={workspace.status !== "active"}>
+                            <RouteIcon data-icon="inline-start" />
+                            <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
+                            {workspace.status === "deleting" && <span className="text-xs text-muted-foreground">Deleting…</span>}
+                          </DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
+                    )}
+                    <DropdownMenuItem disabled={isLoading} onClick={() => openWorkspaceDialog("create")}>
+                      <PlusIcon data-icon="inline-start" />Add New Workspace
                     </DropdownMenuItem>
-                    <DropdownMenuItem
-                      disabled={workspace.default}
-                      onClick={() => {
-                        setWorkspaceName(workspace.name);
-                        setWorkspaceDialog("rename");
-                      }}
-                    >
-                      <span className="flex size-7 items-center justify-center rounded-md border bg-background">
-                        <PencilIcon className="size-4" />
-                      </span>
-                      Rename Workspace
+                    <DropdownMenuItem disabled={!activeWorkspace || activeWorkspace.isDefault || isLoading} onClick={() => openWorkspaceDialog("rename")}>
+                      <PencilIcon data-icon="inline-start" />Rename Workspace
                     </DropdownMenuItem>
-                    <DropdownMenuItem
-                      disabled={workspace.default}
-                      variant="destructive"
-                      onClick={() => {
-                        setDeleteConfirmation("");
-                        setWorkspaceDialog("delete");
-                      }}
-                    >
-                      <span className="flex size-7 items-center justify-center rounded-md border bg-background">
-                        <Trash2Icon className="size-4" />
-                      </span>
-                      Delete Workspace
+                    <DropdownMenuItem disabled={!activeWorkspace || activeWorkspace.isDefault || isLoading} variant="destructive" onClick={() => openWorkspaceDialog("delete")}>
+                      <Trash2Icon data-icon="inline-start" />Delete Workspace
                     </DropdownMenuItem>
                   </DropdownMenuGroup>
                   <DropdownMenuSeparator />
                   <DropdownMenuGroup>
                     <DropdownMenuLabel>Apps</DropdownMenuLabel>
-                    <DropdownMenuRadioGroup
-                      value={app}
-                      onValueChange={(value) =>
-                        navigate(
-                          value === "tool" ? "tool-overview" : "endpoint",
-                        )
-                      }
-                    >
-                      <DropdownMenuRadioItem value="ai">
-                        <span className="flex size-7 items-center justify-center rounded-md border bg-background">
-                          <RouteIcon className="size-3.5" />
-                        </span>
-                        <span className="min-w-0 flex-1 truncate">AI Gateway</span>
-                        <span className="text-[10px] text-muted-foreground">Mock</span>
-                      </DropdownMenuRadioItem>
-                      <DropdownMenuRadioItem value="tool">
-                        <span className="flex size-7 items-center justify-center rounded-md border bg-background">
-                          <WrenchIcon className="size-3.5" />
-                        </span>
-                        <span className="min-w-0 flex-1 truncate">Tool Gateway</span>
-                        <span className="text-[10px] text-muted-foreground">No proxy</span>
-                      </DropdownMenuRadioItem>
+                    <DropdownMenuRadioGroup value={app} onValueChange={(value) => navigate(value === "tool" ? "tool-overview" : "endpoint")}>
+                      <DropdownMenuRadioItem value="ai"><RouteIcon data-icon="inline-start" />AI Gateway</DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="tool"><WrenchIcon data-icon="inline-start" />Tool Gateway</DropdownMenuRadioItem>
                     </DropdownMenuRadioGroup>
                   </DropdownMenuGroup>
                 </DropdownMenuContent>
@@ -308,8 +286,8 @@ export function AppSidebar({
                     <SidebarMenuItem key={item.route}>
                       <SidebarMenuButton
                         tooltip={item.title}
-                         isActive={route === item.route}
-                         render={<Link to={dashboardPaths[item.route]} onClick={() => { if (isMobile) setOpenMobile(false); }} />}
+                        isActive={route === item.route}
+                        render={<Link to={dashboardPaths[item.route]} onClick={() => { if (isMobile) setOpenMobile(false); }} />}
                       >
                         <item.icon />
                         <span>{item.title}</span>
@@ -322,29 +300,21 @@ export function AppSidebar({
           ))}
         </SidebarContent>
         <SidebarFooter>
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                tooltip="Sign out"
-                onClick={() => setLogoutOpen(true)}
-              >
-                <LogOutIcon />
-                <span>Sign out</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
+          <SidebarMenu><SidebarMenuItem><SidebarMenuButton tooltip="Sign out" onClick={() => setLogoutOpen(true)}><LogOutIcon /><span>Sign out</span></SidebarMenuButton></SidebarMenuItem></SidebarMenu>
         </SidebarFooter>
       </Sidebar>
       <WorkspaceDialogs
-        workspace={workspace}
-        workspaceDialog={workspaceDialog}
-        setWorkspaceDialog={setWorkspaceDialog}
+        dialog={workspaceDialog}
+        target={workspaceTarget}
         workspaceName={workspaceName}
         setWorkspaceName={setWorkspaceName}
         deleteConfirmation={deleteConfirmation}
         setDeleteConfirmation={setDeleteConfirmation}
-        saveWorkspace={saveWorkspace}
-        deleteWorkspace={deleteWorkspace}
+        error={workspaceError}
+        saving={savingWorkspace}
+        onClose={() => !savingWorkspace && setWorkspaceDialog(null)}
+        onSave={() => void saveWorkspace()}
+        onDelete={() => void removeWorkspace()}
         logoutOpen={logoutOpen}
         setLogoutOpen={setLogoutOpen}
         loggingOut={loggingOut}
@@ -356,155 +326,83 @@ export function AppSidebar({
 }
 
 function WorkspaceDialogs({
-  workspace,
-  workspaceDialog,
-  setWorkspaceDialog,
-  workspaceName,
-  setWorkspaceName,
-  deleteConfirmation,
-  setDeleteConfirmation,
-  saveWorkspace,
-  deleteWorkspace,
-  logoutOpen,
-  setLogoutOpen,
-  loggingOut,
-  setLoggingOut,
-  onLogout,
+  dialog, target, workspaceName, setWorkspaceName, deleteConfirmation,
+  setDeleteConfirmation, error, saving, onClose, onSave, onDelete, logoutOpen,
+  setLogoutOpen, loggingOut, setLoggingOut, onLogout,
 }: {
-  workspace: Workspace;
-  workspaceDialog: "create" | "rename" | "delete" | null;
-  setWorkspaceDialog: Dispatch<SetStateAction<"create" | "rename" | "delete" | null>>;
+  dialog: WorkspaceDialog;
+  target: Workspace | null;
   workspaceName: string;
   setWorkspaceName: Dispatch<SetStateAction<string>>;
   deleteConfirmation: string;
   setDeleteConfirmation: Dispatch<SetStateAction<string>>;
-  saveWorkspace: () => void;
-  deleteWorkspace: () => void;
+  error: string | null;
+  saving: boolean;
+  onClose: () => void;
+  onSave: () => void;
+  onDelete: () => void;
   logoutOpen: boolean;
   setLogoutOpen: Dispatch<SetStateAction<boolean>>;
   loggingOut: boolean;
   setLoggingOut: Dispatch<SetStateAction<boolean>>;
   onLogout: () => Promise<void>;
 }) {
+  const editing = dialog === "rename";
   return (
     <>
-      <Dialog
-        open={workspaceDialog === "create" || workspaceDialog === "rename"}
-        onOpenChange={(open) => !open && setWorkspaceDialog(null)}
-      >
+      <Dialog open={dialog === "create" || editing} onOpenChange={(open) => !open && onClose()}>
         <DialogContent>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              saveWorkspace();
-            }}
-          >
+          <form onSubmit={(event) => { event.preventDefault(); onSave(); }}>
             <DialogHeader>
-              <DialogTitle>
-                {workspaceDialog === "create"
-                  ? "Create workspace"
-                  : "Rename workspace"}
-              </DialogTitle>
+              <DialogTitle>{editing ? "Rename workspace" : "Create workspace"}</DialogTitle>
               <DialogDescription>
-                {workspaceDialog === "create"
-                  ? "Add a local workspace label for this dashboard session. Mock data is shared across workspace labels."
-                  : "Update the workspace label shown in the dashboard."}
+                Workspace names are persisted. Provider, OAuth, routing, and pricing controls remain browser-only mock fixtures until their workspace APIs are added.
               </DialogDescription>
             </DialogHeader>
-            <div className="py-5">
-              <label className="text-sm font-medium" htmlFor="workspace-name">
-                Workspace name
-              </label>
-              <Input
-                id="workspace-name"
-                className="mt-2"
-                autoFocus
-                value={workspaceName}
-                onChange={(event) => setWorkspaceName(event.target.value)}
-              />
-            </div>
+            <FieldGroup className="mt-5">
+              <Field data-invalid={Boolean(error)}>
+                <FieldLabel htmlFor="workspace-name">Workspace name</FieldLabel>
+                <Input id="workspace-name" autoFocus value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} aria-invalid={Boolean(error)} disabled={saving} />
+                {error && <FieldError>{error}</FieldError>}
+              </Field>
+            </FieldGroup>
             <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setWorkspaceDialog(null)}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={!workspaceName.trim()}>
-                {workspaceDialog === "create" ? "Create" : "Save"}
-              </Button>
+              <Button type="button" variant="outline" disabled={saving} onClick={onClose}>Cancel</Button>
+              <Button type="submit" disabled={saving || !workspaceName.trim()}>{saving && <Spinner data-icon="inline-start" />}{editing ? "Save" : "Create"}</Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
-      <Dialog
-        open={workspaceDialog === "delete"}
-        onOpenChange={(open) => !open && setWorkspaceDialog(null)}
-      >
+      <Dialog open={dialog === "delete"} onOpenChange={(open) => !open && onClose()}>
         <DialogContent>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (deleteConfirmation === workspace.name) deleteWorkspace();
-            }}
-          >
+          <form onSubmit={(event) => { event.preventDefault(); onDelete(); }}>
             <DialogHeader>
-              <DialogTitle>Delete {workspace.name}?</DialogTitle>
+              <DialogTitle>Delete {target?.name}?</DialogTitle>
               <DialogDescription>
-                This removes the local mock workspace from this dashboard
-                session. Type the workspace name to confirm.
+                This permanently removes the workspace. Type its current name to confirm; Default is protected.
               </DialogDescription>
             </DialogHeader>
-            <div className="py-5">
-              <label className="text-sm font-medium" htmlFor="workspace-delete-confirmation">
-                Type {workspace.name}
-              </label>
-              <Input
-                id="workspace-delete-confirmation"
-                className="mt-2"
-                autoFocus
-                value={deleteConfirmation}
-                onChange={(event) => setDeleteConfirmation(event.target.value)}
-              />
-            </div>
+            <FieldGroup className="mt-5">
+              <Field data-invalid={Boolean(error)}>
+                <FieldLabel htmlFor="workspace-delete-confirmation">Type {target?.name}</FieldLabel>
+                <Input id="workspace-delete-confirmation" autoFocus value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} aria-invalid={Boolean(error)} disabled={saving} />
+                {error && <FieldError>{error}</FieldError>}
+              </Field>
+            </FieldGroup>
             <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setWorkspaceDialog(null)}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                variant="destructive"
-                disabled={deleteConfirmation !== workspace.name}
-              >
-                Delete permanently
-              </Button>
+              <Button type="button" variant="outline" disabled={saving} onClick={onClose}>Cancel</Button>
+              <Button type="submit" variant="destructive" disabled={saving || deleteConfirmation !== target?.name}>{saving && <Spinner data-icon="inline-start" />}Delete permanently</Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
       <AlertDialog open={logoutOpen} onOpenChange={setLogoutOpen}>
         <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Sign out?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Your dashboard password session will end in this browser.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
+          <AlertDialogHeader><AlertDialogTitle>Sign out?</AlertDialogTitle><AlertDialogDescription>Your dashboard password session will end in this browser.</AlertDialogDescription></AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={loggingOut}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={loggingOut}
-              onClick={() => {
-                setLoggingOut(true);
-                void onLogout().finally(() => setLoggingOut(false));
-              }}
-            >
-              {loggingOut ? "Signing out..." : "Sign out"}
+            <AlertDialogAction disabled={loggingOut} onClick={() => { setLoggingOut(true); void onLogout().finally(() => setLoggingOut(false)); }}>
+              {loggingOut && <Spinner data-icon="inline-start" />}Sign out
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
