@@ -3,8 +3,8 @@
 The workspace Console Log page reads real events from `GET /api/logs` and sends the
 active `X-RawRoute-Workspace-Id` header. It clears only that workspace with
 `DELETE /api/logs`; the retained `logs.cleared` event is also workspace-scoped.
-The CLIProxy page exposes the separate system view at `GET /api/logs/global` and
-clears only that view with `DELETE /api/logs/global`.
+The standalone global System Logs page reads the separate system view at
+`GET /api/logs/global` and clears only that view with `DELETE /api/logs/global`.
 
 There is no implicit Default workspace for `/api/logs`. A missing or malformed
 workspace header is rejected (400), an unknown workspace is 404, and a workspace
@@ -32,29 +32,31 @@ workspace's buffer and invalidates its write admission. A stale request cannot
 recreate that deleted buffer. Global logs are intentionally independent of this
 deletion flow.
 
-Server events cover auth requests, credential reads, CLIProxy management requests,
-lifecycle operations and automatic recovery, gateway responses, startup/shutdown,
-and database health-check failures. Successful background status polls are quiet.
-Gateway events include allowlisted endpoint names and HTTP methods; unknown paths
-are labeled `other`, and queries are omitted. Gateway timing measures time to
-response headers, not streamed response completion;
-the logger never consumes or buffers the response stream.
+Server events cover auth requests, CLIProxy management requests, lifecycle
+operations and automatic recovery, gateway authentication/routing responses,
+startup/shutdown, and database health-check failures. Successful background
+status polls are quiet. A valid gateway key writes its allowlisted endpoint and
+method only to that key's workspace buffer. Rejected or unavailable gateway
+authentication writes a constant event to the global buffer without a workspace.
+Queries, credential values, headers, and arbitrary paths are never logged.
 
 Browser reports are posted to `POST /api/logs/events`. The server chooses their
 scope from its closed event/page catalog, not from a browser-supplied workspace ID.
 Workspace events require the captured active workspace ID in the request header and
-are admitted like other workspace writes. Global-page events, unscoped runtime
-errors, and gateway-key copy events are written only to the global buffer. A runtime
-error with a validated workspace page is scoped to that page's workspace. An
-event/page combination that does not match the catalog is rejected rather than
-reassigned.
+are admitted like other workspace writes. Endpoint & Key is a workspace page, so
+its create, rename, reveal, delete, and copy events are scoped to the key owner and
+contain no key values. Global-page events and unscoped runtime errors are written
+only to the global buffer. A runtime error with a validated workspace page is scoped
+to that page's workspace. An event/page combination that does not match the catalog
+is rejected rather than reassigned.
 
-Reports cover committed provider/model/credential, Codex, routing, budget, and
-pricing edits; navigation; clipboard actions; local budget settings; console
-controls; and runtime errors. Demo state changes are explicitly labeled **local
-demo**. Browser events are best-effort, client-reported observations, not authoritative
-server-side confirmations. Reports are bounded to 1 KiB and 120/minute per process.
-Search terms, drafts, keystrokes and secret values are never captured.
+Reports cover committed provider/model/credential, Codex, routing, budget, pricing,
+and persisted gateway-key actions; navigation; clipboard actions; local budget
+settings; console controls; and runtime errors. Demo state changes are explicitly
+labeled **local demo**. Browser events are best-effort, client-reported observations,
+not authoritative server-side confirmations. Reports are bounded to 1 KiB and
+120/minute per process. Search terms, drafts, keystrokes and secret values are never
+captured.
 
 ## Add logging to a feature
 
@@ -75,7 +77,7 @@ interpolate user input or exception text into source, event, message, or metadat
 keys. Do not pass credentials, cookies, headers, request/response bodies, prompts,
 or URLs. The logger cannot identify arbitrary secrets in free-form messages.
 
-`tracked(...)` in `src/index.ts` is for the currently registered global and legacy
+`tracked(...)` in `src/index.ts` is for currently registered global management
 routes. It uses `loggedRequest` with explicit global scope, preserves the original
 response, and logs status, success, and duration even for rejected requests. Use
 `failuresOnly = true` for background polling.

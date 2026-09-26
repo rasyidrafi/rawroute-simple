@@ -56,7 +56,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { SystemLogPanel } from "@/components/dashboard/console-log-page";
 
 type StatusDetails = CliproxyStatus & {
   pid?: number | null;
@@ -419,7 +418,6 @@ export function CliproxyPage() {
         </Card>
 
         <ConnectionDetailsCard status={status} port={port} />
-        <SystemLogPanel />
       </div>
 
       <PendingActionDialog

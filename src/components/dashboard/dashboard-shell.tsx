@@ -35,6 +35,7 @@ const titles: Record<DashboardRoute, string> = {
   pricing: "Model Pricing",
   logs: "Console Log",
   cliproxy: "CLIProxyAPI",
+  "system-logs": "System Logs",
   settings: "Settings",
   "tool-overview": "Overview",
   "tool-tools": "Tools",
@@ -144,7 +145,7 @@ function DashboardContent({
                    {scope === "global"
                       ? "Global"
                       : activeWorkspace
-                        ? route === "logs"
+                        ? route === "logs" || route === "endpoint"
                           ? "Workspace"
                           : "Workspace mock · browser only"
                        : isWorkspaceLoading

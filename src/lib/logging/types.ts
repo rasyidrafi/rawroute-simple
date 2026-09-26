@@ -35,7 +35,11 @@ export const browserEvents = {
   "dashboard.copy-failed": "Clipboard copy failed",
   "dashboard.error": "Dashboard runtime error (details omitted)",
   "dashboard.rejection": "Dashboard unhandled promise rejection (details omitted)",
-  "gateway-key.copied": "Gateway credential copied (value omitted)",
+  "gateway-key.copied": "Workspace gateway key copied (value omitted)",
+  "gateway-keys.created": "Workspace gateway key created",
+  "gateway-keys.renamed": "Workspace gateway key renamed",
+  "gateway-keys.revealed": "Workspace gateway key revealed (value omitted)",
+  "gateway-keys.deleted": "Workspace gateway key deleted",
   "providers.changed": "Local demo providers changed",
   "models.changed": "Local demo provider models changed",
   "provider-keys.changed": "Local demo provider credentials changed",
@@ -59,7 +63,7 @@ export type BrowserEvent = keyof typeof browserEvents;
 
 export const dashboardPages = [
   "endpoint", "providers", "codex", "routing", "usage", "budgets", "pricing",
-  "logs", "cliproxy", "settings", "tool-overview", "tool-tools",
+  "logs", "cliproxy", "system-logs", "settings", "tool-overview", "tool-tools",
   "tool-connections", "tool-policies", "tool-activity", "tool-settings",
 ] as const;
 

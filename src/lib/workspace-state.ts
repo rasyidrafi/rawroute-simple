@@ -23,6 +23,28 @@ export function removeWorkspaceFromState(
   };
 }
 
+/**
+ * Drop browser-only fixture snapshots only after a successfully resolved
+ * workspace list (or a confirmed local workspace mutation) is visible. A
+ * loading or failed refresh is not authoritative and must retain drafts.
+ */
+export function pruneWorkspaceCollections<T>(
+  collections: Record<string, T>,
+  workspaces: ReadonlyArray<Pick<Workspace, "id">>,
+  isAuthoritative: boolean,
+): Record<string, T> {
+  if (!isAuthoritative) return collections;
+
+  const workspaceIds = new Set(workspaces.map((workspace) => workspace.id));
+  let removed = false;
+  const remaining: Record<string, T> = {};
+  for (const [workspaceId, collection] of Object.entries(collections)) {
+    if (workspaceIds.has(workspaceId)) remaining[workspaceId] = collection;
+    else removed = true;
+  }
+  return removed ? remaining : collections;
+}
+
 export function updateWorkspaceCollection<T>(
   collections: Record<string, T>,
   workspaceId: string,

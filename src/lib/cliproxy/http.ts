@@ -2,9 +2,6 @@ import type { BunRequest, Server } from "bun";
 import { getCurrentSession } from "../auth";
 import { env } from "../env";
 import {
-  CLIPROXY_HOST,
-  CLIPROXY_PORT,
-  getApiKey,
   getStatus,
   getVersions,
   install,
@@ -16,18 +13,6 @@ import {
 const MAX_MANAGEMENT_BODY_BYTES = 4 * 1024;
 const VERSION_PATTERN =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
-const HOP_BY_HOP_HEADERS = new Set([
-  "connection",
-  "keep-alive",
-  "proxy-authenticate",
-  "proxy-authorization",
-  "proxy-connection",
-  "te",
-  "trailer",
-  "transfer-encoding",
-  "upgrade",
-  "http2-settings",
-]);
 
 class HttpError extends Error {
   constructor(
@@ -262,10 +247,6 @@ export function cliproxyVersions(request: BunRequest, server: Server<undefined>)
   }, 502);
 }
 
-export function cliproxyKey(request: BunRequest): Promise<Response> {
-  return withManagement(request, async () => json({ apiKey: getApiKey() }), 503);
-}
-
 export function cliproxyInstall(request: BunRequest, server: Server<undefined>): Promise<Response> {
   return withManagement(request, async () => {
     const version = await readInstallVersion(request);
@@ -298,73 +279,6 @@ export function cliproxyStop(request: BunRequest, server: Server<undefined>): Pr
 
 export function cliproxyRestart(request: BunRequest, server: Server<undefined>): Promise<Response> {
   return cliproxyAction(request, server, restart);
-}
-
-function connectionHeaderTokens(headers: Headers): Set<string> {
-  return new Set(
-    (headers.get("connection") ?? "")
-      .split(",")
-      .map((token) => token.trim().toLowerCase())
-      .filter(Boolean),
-  );
-}
-
-function copyProxyHeaders(source: Headers, stripCookies: boolean): Headers {
-  const strippedHeaders = new Set([...HOP_BY_HOP_HEADERS, ...connectionHeaderTokens(source), "host"]);
-  if (stripCookies) {
-    strippedHeaders.add("cookie");
-    strippedHeaders.add("cookie2");
-  }
-
-  const headers = new Headers();
-  source.forEach((value, name) => {
-    if (!strippedHeaders.has(name.toLowerCase())) headers.append(name, value);
-  });
-  return headers;
-}
-
-function unavailableResponse(): Response {
-  return json({ error: "CLIProxy is unavailable." }, 503);
-}
-
-export async function proxyCliproxy(request: BunRequest, server: Server<undefined>): Promise<Response> {
-  server.timeout(request, 0);
-
-  const authorization = request.headers.get("authorization") ?? "";
-  const apiKey = request.headers.get("x-api-key")?.trim() ?? "";
-  if (!/^Bearer\s+\S+$/i.test(authorization) && !apiKey) {
-    return json(
-      { error: "A CLIProxy API key is required." },
-      401,
-      { "WWW-Authenticate": "Bearer" },
-    );
-  }
-
-  const incomingUrl = new URL(request.url);
-  const upstreamUrl = `http://${CLIPROXY_HOST}:${CLIPROXY_PORT}${incomingUrl.pathname}${incomingUrl.search}`;
-  try {
-    const headers = copyProxyHeaders(request.headers, true);
-    if (!/^Bearer\s+\S+$/i.test(authorization)) headers.delete("authorization");
-    const upstream = await fetch(upstreamUrl, {
-      method: request.method,
-      headers,
-      body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
-      signal: request.signal,
-      redirect: "manual",
-      decompress: false,
-    });
-    return new Response(request.method === "HEAD" ? null : upstream.body, {
-      status: upstream.status,
-      statusText: upstream.statusText,
-      headers: copyProxyHeaders(upstream.headers, false),
-    });
-  } catch {
-    return unavailableResponse();
-  }
-}
-
-export function cliproxyRoot(): Response {
-  return json({ error: "Use a CLIProxy endpoint under /v1/." }, 404);
 }
 
 export function cliproxyManagementNotFound(): Response {

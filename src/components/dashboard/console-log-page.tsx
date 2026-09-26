@@ -21,16 +21,15 @@ export function ConsoleLog({ workspaceId }: { workspaceId: string }) {
 }
 
 export function SystemLogPanel() {
-  return <LogPanel scope={{ kind: "global" }} title="System Logs" description="Global administrator, CLIProxy, authentication, and legacy native gateway history. This is distinct from every workspace console." compact />;
+  return <LogPanel scope={{ kind: "global" }} title="System Logs" description="Global administrator, CLIProxy, authentication, and rejected gateway authentication history. This is distinct from every workspace console." />;
 }
 
 function LogPanel({
-  scope, title, description, compact = false,
+  scope, title, description,
 }: {
   scope: { kind: "workspace"; workspaceId: string } | { kind: "global" };
   title: string;
   description: string;
-  compact?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [level, setLevel] = useState("ALL");
@@ -47,8 +46,8 @@ function LogPanel({
   }
 
   return (
-    <main className={compact ? "min-w-0" : "flex-1 bg-[#f6f5f1] p-4 dark:bg-background md:p-6 lg:p-8"}>
-      <div className={compact ? "" : "mx-auto flex max-w-7xl flex-col gap-8"}>
+    <main className="flex-1 bg-[#f6f5f1] p-4 dark:bg-background md:p-6 lg:p-8">
+      <div className="mx-auto flex max-w-7xl flex-col gap-8">
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -63,7 +62,7 @@ function LogPanel({
                 <RefreshCwIcon data-icon="inline-start" />{busy ? "Loading…" : "Refresh"}
               </Button>
               <Button size="sm" variant="outline" disabled={!visible.length} onClick={async () => {
-                if (await copy(visible.map(formatLog).join("\n"), "Logs copied", { page: scope.kind === "workspace" ? "logs" : "cliproxy", workspaceId: scope.kind === "workspace" ? scope.workspaceId : null })) {
+                if (await copy(visible.map(formatLog).join("\n"), "Logs copied", { page: scope.kind === "workspace" ? "logs" : "system-logs", workspaceId: scope.kind === "workspace" ? scope.workspaceId : null })) {
                   if (scope.kind === "workspace") reportEvent("logs.copied", { workspaceId: scope.workspaceId });
                 }
               }}>

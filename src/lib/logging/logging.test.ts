@@ -1,7 +1,7 @@
 import { beforeEach, expect, test } from "bun:test";
 import type { BunRequest, Server } from "bun";
 import { createLogStore, logs, resolveLogStore, safeDetails } from "./store";
-import { loggedGateway, loggedRequest } from "./request";
+import { loggedRequest } from "./request";
 import { formatLog, type LogDetails } from "./types";
 import { collectionChanges } from "./collection";
 
@@ -175,14 +175,4 @@ test("invalidated workspace admissions cannot recreate a deleted buffer", () => 
   expect(store.record(event, "INFO", {}, "server", admission)).toBe(false);
   expect(store.clear(admission)).toBe(false);
   expect(store.snapshot({ kind: "workspace", workspaceId }).entries).toHaveLength(0);
-});
-
-test("gateway events identify allowlisted endpoints and methods without logging arbitrary URLs", async () => {
-  const handler = loggedGateway(() => new Response());
-  await handler(new Request("http://localhost/v1/chat/completions?token=secret", { method: "POST" }) as BunRequest, {} as Server<undefined>);
-  const customRequest = new Request("http://localhost/v1/secret") as BunRequest;
-  Object.defineProperty(customRequest, "method", { value: "SECRET" });
-  await handler(customRequest, {} as Server<undefined>);
-  expect(logs.snapshot().entries.map((entry) => entry.event)).toEqual(["gateway.other.other", "gateway.chat-completions.post"]);
-  expect(JSON.stringify(logs.snapshot()).toLowerCase()).not.toContain("secret");
 });

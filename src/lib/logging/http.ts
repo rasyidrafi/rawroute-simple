@@ -175,14 +175,18 @@ const workspaceEvents = new Set<BrowserEvent>([
   "budgets.beyond-limits", "codex.authorize", "codex.credit", "logs.copied", "logs.paused", "logs.resumed",
 ]);
 
+const endpointEvents = new Set<BrowserEvent>([
+  "gateway-key.copied", "gateway-keys.created", "gateway-keys.renamed", "gateway-keys.revealed", "gateway-keys.deleted",
+]);
+
 function browserEventScope(event: BrowserEvent, page: unknown): "global" | "workspace" | null {
   if ((event === "dashboard.error" || event === "dashboard.rejection") && page === undefined) return "global";
   if (page !== undefined && (typeof page !== "string" || (!globalPages.has(page) && !workspacePages.has(page)))) return null;
-  if (workspaceEvents.has(event)) return page === undefined || workspacePages.has(page) ? "workspace" : null;
-  if (event === "gateway-key.copied") return page === undefined || globalPages.has(page) ? "global" : null;
+  if (endpointEvents.has(event)) return page === "endpoint" ? "workspace" : null;
+  if (workspaceEvents.has(event)) return page === undefined || (page !== "endpoint" && workspacePages.has(page)) ? "workspace" : null;
   if (typeof page !== "string") return null;
   return globalPages.has(page) ? "global" : "workspace";
 }
 
-const globalPages = new Set(["endpoint", "cliproxy", "settings"]);
-const workspacePages = new Set(["providers", "codex", "routing", "usage", "budgets", "pricing", "logs", "tool-overview", "tool-tools", "tool-connections", "tool-policies", "tool-activity", "tool-settings"]);
+const globalPages = new Set(["cliproxy", "system-logs", "settings"]);
+const workspacePages = new Set(["endpoint", "providers", "codex", "routing", "usage", "budgets", "pricing", "logs", "tool-overview", "tool-tools", "tool-connections", "tool-policies", "tool-activity", "tool-settings"]);

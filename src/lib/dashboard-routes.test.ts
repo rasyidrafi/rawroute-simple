@@ -11,8 +11,9 @@ test("each dashboard URL has a stable page ID and provider detail has a bounded 
 });
 
 test("route scope metadata keeps global lifecycle pages out of workspace scope", () => {
-  expect(dashboardRouteMeta.endpoint.scope).toBe("global");
+  expect(dashboardRouteMeta.endpoint.scope).toBe("workspace");
   expect(dashboardRouteMeta.cliproxy.scope).toBe("global");
+  expect(dashboardRouteMeta["system-logs"].scope).toBe("global");
   expect(dashboardRouteMeta.settings.scope).toBe("global");
   expect(dashboardRouteMeta.logs.scope).toBe("workspace");
   expect(dashboardRouteMeta.providers.scope).toBe("workspace");

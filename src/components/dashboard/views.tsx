@@ -10,11 +10,11 @@ import { collectionChanges } from "@/lib/logging/collection";
 import { reportEvent } from "@/lib/logging/client";
 import type { BrowserEvent } from "@/lib/logging/types";
 import { dashboardPaths, dashboardRouteMeta, type DashboardRoute } from "@/lib/dashboard-routes";
-import { updateWorkspaceCollection } from "@/lib/workspace-state";
+import { pruneWorkspaceCollections, updateWorkspaceCollection } from "@/lib/workspace-state";
 import { Budgets } from "@/components/dashboard/budgets-page";
 import { CliproxyPage } from "@/components/dashboard/cliproxy-page";
 import { CodexProviders } from "@/components/dashboard/codex-page";
-import { ConsoleLog } from "@/components/dashboard/console-log-page";
+import { ConsoleLog, SystemLogPanel } from "@/components/dashboard/console-log-page";
 import { EndpointKeys } from "@/components/dashboard/endpoint-page";
 import { Page } from "@/components/dashboard/page-ui";
 import { Pricing } from "@/components/dashboard/pricing-page";
@@ -60,12 +60,25 @@ function cloneFixture<T>(value: T[]): T[] {
  */
 function useWorkspaceCollection<T>(
   workspaceId: string | null,
+  workspaces: { id: string }[],
+  workspaceListVersion: number,
   initialValue: T[],
   event: BrowserEvent,
 ) {
   const [collections, setCollections] = useState<Record<string, T[]>>({});
   const value = workspaceId ? collections[workspaceId] ?? initialValue : initialValue;
   const previousCollections = useRef<Record<string, T[]>>({});
+  const synchronizedWorkspaceListVersion = useRef(0);
+
+  useEffect(() => {
+    if (workspaceListVersion === 0 || synchronizedWorkspaceListVersion.current === workspaceListVersion) return;
+    synchronizedWorkspaceListVersion.current = workspaceListVersion;
+    // Removing an owner key does not appear as a fixture edit: the reporting
+    // effect below only compares collection entries that still exist.
+    setCollections((current) =>
+      pruneWorkspaceCollections(current, workspaces, true),
+    );
+  }, [workspaceListVersion, workspaces]);
 
   useEffect(() => {
     const before = previousCollections.current;
@@ -108,16 +121,16 @@ export function DashboardViews({
   providerDetail,
   onPasswordChanged,
 }: Props) {
-  const { activeWorkspaceId, isLoading, error, reload } = useWorkspace();
-  const [providers, setProviders] = useWorkspaceCollection(activeWorkspaceId, initialProviders, "providers.changed");
-  const [models, setModels] = useWorkspaceCollection(activeWorkspaceId, initialModels, "models.changed");
-  const [codexModels, setCodexModels] = useWorkspaceCollection(activeWorkspaceId, initialCodexModels, "codex-models.changed");
-  const [codexAccounts, setCodexAccounts] = useWorkspaceCollection(activeWorkspaceId, initialCodexAccounts, "codex-accounts.changed");
-  const [providerCredentialLabels, setProviderCredentialLabels] = useWorkspaceCollection(activeWorkspaceId, initialProviderCredentialLabels, "provider-keys.changed");
-  const [aliases, setAliases] = useWorkspaceCollection(activeWorkspaceId, initialAliases, "aliases.changed");
-  const [combos, setCombos] = useWorkspaceCollection(activeWorkspaceId, initialCombos, "combos.changed");
-  const [budgets, setBudgets] = useWorkspaceCollection(activeWorkspaceId, initialBudgets, "budgets.changed");
-  const [priceGroups, setPriceGroups] = useWorkspaceCollection(activeWorkspaceId, initialPriceGroups, "pricing.changed");
+  const { activeWorkspaceId, workspaces, workspaceListVersion, isLoading, error, reload } = useWorkspace();
+  const [providers, setProviders] = useWorkspaceCollection(activeWorkspaceId, workspaces, workspaceListVersion, initialProviders, "providers.changed");
+  const [models, setModels] = useWorkspaceCollection(activeWorkspaceId, workspaces, workspaceListVersion, initialModels, "models.changed");
+  const [codexModels, setCodexModels] = useWorkspaceCollection(activeWorkspaceId, workspaces, workspaceListVersion, initialCodexModels, "codex-models.changed");
+  const [codexAccounts, setCodexAccounts] = useWorkspaceCollection(activeWorkspaceId, workspaces, workspaceListVersion, initialCodexAccounts, "codex-accounts.changed");
+  const [providerCredentialLabels, setProviderCredentialLabels] = useWorkspaceCollection(activeWorkspaceId, workspaces, workspaceListVersion, initialProviderCredentialLabels, "provider-keys.changed");
+  const [aliases, setAliases] = useWorkspaceCollection(activeWorkspaceId, workspaces, workspaceListVersion, initialAliases, "aliases.changed");
+  const [combos, setCombos] = useWorkspaceCollection(activeWorkspaceId, workspaces, workspaceListVersion, initialCombos, "combos.changed");
+  const [budgets, setBudgets] = useWorkspaceCollection(activeWorkspaceId, workspaces, workspaceListVersion, initialBudgets, "budgets.changed");
+  const [priceGroups, setPriceGroups] = useWorkspaceCollection(activeWorkspaceId, workspaces, workspaceListVersion, initialPriceGroups, "pricing.changed");
 
   if (dashboardRouteMeta[route].scope === "workspace" && !activeWorkspaceId) {
     return <WorkspaceUnavailable loading={isLoading} error={error} onRetry={reload} />;
@@ -161,8 +174,9 @@ function renderDashboardRoute({
   codexAccounts, setCodexAccounts, providerCredentialLabels, setProviderCredentialLabels,
   aliases, setAliases, combos, setCombos, budgets, setBudgets, priceGroups, setPriceGroups,
 }: WorkspaceRouteProps): ReactNode {
-  if (route === "endpoint") return <EndpointKeys />;
+  if (route === "endpoint" && workspaceId) return <EndpointKeys key={workspaceId} workspaceId={workspaceId} />;
   if (route === "cliproxy") return <CliproxyPage />;
+  if (route === "system-logs") return <SystemLogPanel />;
   if (route === "providers") {
     const provider = providers.find((item) => item.id === providerId);
     if (!providerDetail) return <Providers key={workspaceId} providers={providers} setProviders={setProviders} />;

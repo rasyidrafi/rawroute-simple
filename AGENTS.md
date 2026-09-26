@@ -19,11 +19,11 @@
 
 ## Workspace foundation contract
 
-- Workspaces are persisted administration resources. Global routes (auth, Settings, CLIProxy lifecycle, and legacy native `/v1`) deliberately ignore workspace headers. Only a new scoped API may call `requireWorkspaceRequestScope(request)`; it must pass `scope.workspace.id` explicitly into every repository operation and never fall back to Default.
+- Workspaces are persisted administration resources. Global routes (auth, Settings, and CLIProxy lifecycle) deliberately ignore workspace headers. Public `/v1` authentication derives its active workspace only from the gateway key and ignores client workspace headers; it is currently gated until workspace routing exists. Only an administrator-scoped API may call `requireWorkspaceRequestScope(request)`; it must pass `scope.workspace.id` explicitly into every repository operation and never fall back to Default.
 - Workspace-owned database tables need a non-null `workspace_id`; keep uniqueness and ownership relationships scoped with composite keys/constraints where appropriate, and include `workspace_id` in every query predicate. Do not authorize a workspace row from an unscoped resource ID.
 - Scoped caches are opt-in, bounded, keyed by workspace first, and explicitly invalidated after mutations and workspace deletion. Do not add a cache without an invalidation plan or use an ambient/default workspace cache.
 - Background jobs must persist/carry a workspace ID, re-check that it is active when they execute, and participate in deletion cancellation/draining or idempotent deletion cleanup. Process-local request scope is not job ownership.
-- Provider credentials, OAuth accounts, and any shared CLIProxy transport require a documented ownership/isolation design before becoming workspace-scoped. Current provider controls are browser-only mock fixtures and native `/v1` remains global; do not imply that either is tenant-isolated.
+- Provider credentials, OAuth accounts, and any shared CLIProxy transport require a documented ownership/isolation design before becoming workspace-scoped. Current provider controls are browser-only mock fixtures; do not imply that they, CLIProxy, or public `/v1` routing are tenant-isolated.
 
 ## Commands
 

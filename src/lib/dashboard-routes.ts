@@ -7,6 +7,7 @@ export const dashboardPaths = {
   budgets: "/dashboard/ai/budgets",
   pricing: "/dashboard/ai/pricing",
   cliproxy: "/dashboard/cliproxy",
+  "system-logs": "/dashboard/system-logs",
   logs: "/dashboard/logs",
   settings: "/dashboard/settings",
   "tool-overview": "/dashboard/tools/overview",
@@ -21,11 +22,11 @@ export type DashboardRoute = keyof typeof dashboardPaths;
 export type DashboardPageScope = "global" | "workspace";
 
 /**
- * Routing scope is presentation metadata today. The next console/resource
- * slices reuse it to choose an explicit workspace request scope.
+ * Routing scope controls workspace availability, request provenance, and browser
+ * event attribution for pages with persisted workspace resources.
  */
 export const dashboardRouteMeta: Record<DashboardRoute, { scope: DashboardPageScope }> = {
-  endpoint: { scope: "global" },
+  endpoint: { scope: "workspace" },
   providers: { scope: "workspace" },
   codex: { scope: "workspace" },
   routing: { scope: "workspace" },
@@ -34,6 +35,7 @@ export const dashboardRouteMeta: Record<DashboardRoute, { scope: DashboardPageSc
   pricing: { scope: "workspace" },
   logs: { scope: "workspace" },
   cliproxy: { scope: "global" },
+  "system-logs": { scope: "global" },
   settings: { scope: "global" },
   "tool-overview": { scope: "workspace" },
   "tool-tools": { scope: "workspace" },

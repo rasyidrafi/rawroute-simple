@@ -267,8 +267,11 @@ test("workspace console HTTP isolates snapshots, rejects spoofed scope, clears l
   }))).status).toBe(400);
   expect((await logHttp.reportBrowserEvent(browserEvent(alpha.id))).status).toBe(200);
   expect((await logHttp.reportBrowserEvent(browserEvent(beta.id))).status).toBe(200);
-  // A global-only event cannot be forced into a workspace merely by sending its header.
-  expect((await logHttp.reportBrowserEvent(browserEvent(alpha.id, "gateway-key.copied"))).status).toBe(200);
+  // Gateway-key actions belong to their Endpoint page workspace, never global logs.
+  expect((await logHttp.reportBrowserEvent(makeRequest("/api/logs/events", {
+    sessionToken: token, workspaceId: alpha.id,
+    body: JSON.stringify({ event: "gateway-key.copied", page: "endpoint" }),
+  }))).status).toBe(200);
   // Browser-global runtime errors have unknown provenance, while an explicit
   // page/header pair retains workspace attribution.
   expect((await logHttp.reportBrowserEvent(makeRequest("/api/logs/events", {
@@ -280,12 +283,12 @@ test("workspace console HTTP isolates snapshots, rejects spoofed scope, clears l
 
   const alphaSnapshot = await (await logHttp.readLogs(makeRequest("/api/logs", { sessionToken: token, workspaceId: alpha.id }))).json() as { entries: Array<{ workspaceId: string; event: string }> };
   const betaSnapshot = await (await logHttp.readLogs(makeRequest("/api/logs", { sessionToken: token, workspaceId: beta.id }))).json() as { entries: Array<{ workspaceId: string; event: string }> };
-  expect(alphaSnapshot.entries).toHaveLength(2);
-  expect(alphaSnapshot.entries.map((entry) => entry.event)).toEqual(["dashboard.error", "providers.changed"]);
+  expect(alphaSnapshot.entries).toHaveLength(3);
+  expect(alphaSnapshot.entries.map((entry) => entry.event)).toEqual(["dashboard.error", "gateway-key.copied", "providers.changed"]);
   expect(alphaSnapshot.entries[0]).toMatchObject({ workspaceId: alpha.id });
   expect(betaSnapshot.entries).toHaveLength(1);
   expect(betaSnapshot.entries[0]).toMatchObject({ workspaceId: beta.id, event: "providers.changed" });
-  expect(logs.snapshot().entries.map((entry) => entry.event)).toEqual(["dashboard.error", "gateway-key.copied"]);
+  expect(logs.snapshot().entries.map((entry) => entry.event)).toEqual(["dashboard.error"]);
 
   expect((await logHttp.clearLogs(makeRequest("/api/logs", { method: "DELETE", sessionToken: token, workspaceId: alpha.id }))).status).toBe(200);
   expect(logs.snapshot({ kind: "workspace", workspaceId: alpha.id }).entries.map((entry) => entry.event)).toEqual(["logs.cleared"]);

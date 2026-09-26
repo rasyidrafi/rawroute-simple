@@ -14,6 +14,7 @@ const { env } = await import("./env");
 const { cliproxyStatus } = await import("./cliproxy/http");
 const { clearGlobalLogs, readGlobalLogs, reportBrowserEvent } = await import("./logging/http");
 const { logs } = await import("./logging/store");
+const { ensureWorkspaceSchema } = await import("./workspaces");
 
 type TestRequest = BunRequest & {
   readSessionToken: () => string | null;
@@ -31,6 +32,7 @@ function makeRequest(
     forwardedFor?: string;
     connectingIp?: string;
     sessionToken?: string | null;
+    workspaceId?: string;
   } = {},
 ): TestRequest {
   const headers = new Headers();
@@ -43,6 +45,7 @@ function makeRequest(
   if (options.fetchSite) headers.set("sec-fetch-site", options.fetchSite);
   if (options.forwardedFor) headers.set("x-forwarded-for", options.forwardedFor);
   if (options.connectingIp) headers.set("cf-connecting-ip", options.connectingIp);
+  if (options.workspaceId) headers.set("x-rawroute-workspace-id", options.workspaceId);
 
   const request = new Request(`http://localhost:3001${path}`, {
     method: options.method ?? (options.body === undefined ? "GET" : "POST"),
@@ -159,6 +162,7 @@ function interceptBatch(
 
 beforeAll(async () => {
   await auth.ensureAuthSchema();
+  await ensureWorkspaceSchema();
 });
 
 beforeEach(async () => {
@@ -606,10 +610,12 @@ test("browser event intake rejects forged messages, secrets, invalid types and o
   }
   expect(logs.snapshot().entries).toHaveLength(0);
   const report = () => makeRequest("/api/logs/events", {
-    sessionToken: session.token, body: JSON.stringify({ event: "gateway-key.copied", added: 1 }),
+    sessionToken: session.token,
+    workspaceId: "default",
+    body: JSON.stringify({ event: "gateway-key.copied", page: "endpoint", added: 1 }),
   });
   expect((await reportBrowserEvent(report())).status).toBe(200);
-  expect(logs.snapshot().entries[0]).toMatchObject({ event: "gateway-key.copied", origin: "browser", scope: "global", workspaceId: null, details: { added: 1 } });
+  expect(logs.snapshot({ kind: "workspace", workspaceId: "default" }).entries[0]).toMatchObject({ event: "gateway-key.copied", origin: "browser", scope: "workspace", workspaceId: "default", details: { added: 1 } });
   for (let index = 0; index < 120; index++) await reportBrowserEvent(report());
   expect((await reportBrowserEvent(report())).status).toBe(429);
 });

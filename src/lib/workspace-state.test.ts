@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { workspaceScopedRequest, type Workspace } from "./workspace-api";
-import { activeWorkspaceIdFor, removeWorkspaceFromState, updateWorkspaceCollection } from "./workspace-state";
+import { activeWorkspaceIdFor, pruneWorkspaceCollections, removeWorkspaceFromState, updateWorkspaceCollection } from "./workspace-state";
 
 const defaultWorkspace: Workspace = {
   id: "default", name: "Default", isDefault: true, status: "active", createdAt: 1, updatedAt: 1,
@@ -30,6 +30,27 @@ test("workspace collections keep A and B isolated while retaining each snapshot"
   const afterB = updateWorkspaceCollection(afterA, "b", initial, (items) => [...items, "B draft"]);
   expect(afterB.a).toEqual(["fixture", "A draft"]);
   expect(afterB.b).toEqual(["fixture", "B draft"]);
+});
+
+test("workspace collection cleanup removes deleted snapshots but preserves surviving edits", () => {
+  const collections = {
+    default: ["fixture", "Default draft"],
+    a: ["fixture", "A draft"],
+    b: ["fixture", "Deleted workspace draft"],
+  };
+
+  expect(pruneWorkspaceCollections(collections, [defaultWorkspace, workspaceA], true)).toEqual({
+    default: ["fixture", "Default draft"],
+    a: ["fixture", "A draft"],
+  });
+});
+
+test("workspace collection cleanup waits for a successful list result", () => {
+  const collections = { a: ["A draft"], b: ["B draft"] };
+
+  // Loading and failed refreshes both leave this marker false, even if their
+  // temporary list is empty.
+  expect(pruneWorkspaceCollections(collections, [], false)).toBe(collections);
 });
 
 test("future scoped requests use the caller-captured workspace ID", () => {

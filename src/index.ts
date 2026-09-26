@@ -3,23 +3,23 @@ import index from "./index.html";
 import { changePassword, ensureAuthSchema, ensureDefaultPassword, loginFromPeer, logout, status } from "./lib/auth";
 import {
   cliproxyInstall,
-  cliproxyKey,
   cliproxyManagementNotFound,
   cliproxyRestart,
-  cliproxyRoot,
   cliproxyStart,
   cliproxyStatus,
   cliproxyStop,
   cliproxyVersions,
-  proxyCliproxy,
   stopAcceptingCliproxyMutations,
 } from "./lib/cliproxy/http";
 import { initCliproxy, shutdownCliproxy } from "./lib/cliproxy";
 import { checkDatabaseConnection } from "./lib/db";
 import { env } from "./lib/env";
+import { deleteGatewayKeysForWorkspace, ensureGatewayKeySchema } from "./lib/gateway-keys";
+import { deleteGatewayKeyHttp, getGatewayKeys, patchGatewayKey, postGatewayKey, revealGatewayKeyHttp } from "./lib/gateway-keys-http";
 import { clearGlobalLogs, clearLogs, readGlobalLogs, readLogs, reportBrowserEvent } from "./lib/logging/http";
-import { loggedGateway, loggedRequest } from "./lib/logging/request";
+import { loggedRequest } from "./lib/logging/request";
 import { logs } from "./lib/logging/store";
+import { gatewayEndpoints, gatewayMethodNotAllowed, gatewayRoot, gatewayUnavailable } from "./lib/gateway-http";
 import { dashboardAliases, dashboardPage, dashboardPaths } from "./lib/dashboard-routes";
 import { ensureWorkspaceSchema, recoverInterruptedWorkspaceDeletions, registerWorkspaceDeletionExtension } from "./lib/workspaces";
 import { deleteWorkspaceHttp, getWorkspaces, patchWorkspace, postWorkspace } from "./lib/workspaces-http";
@@ -27,8 +27,8 @@ import { deleteWorkspaceHttp, getWorkspaces, patchWorkspace, postWorkspace } fro
 // All new API handlers should use this registration helper. Polling endpoints
 // log failures only so watching the dashboard does not flood the console.
 function tracked(source: string, event: string, message: string, handler: Parameters<typeof loggedRequest>[1], failuresOnly = false) {
-  // Every currently registered HTTP route is an administrator/global or legacy
-  // route. Future workspace APIs must opt in through an explicit scoped wrapper.
+  // These are global audit records and never include request values. Scoped
+  // handlers still establish and enforce their own explicit workspace scope.
   return loggedRequest({ source, event, message }, handler, { failuresOnly, scope: "global" });
 }
 
@@ -36,9 +36,14 @@ await ensureAuthSchema();
 await ensureDefaultPassword();
 await ensureWorkspaceSchema();
 await recoverInterruptedWorkspaceDeletions();
+await ensureGatewayKeySchema();
 registerWorkspaceDeletionExtension({
   name: "workspace-console-logs",
   deleteWorkspaceData: (workspaceId) => logs.deleteWorkspace(workspaceId),
+});
+registerWorkspaceDeletionExtension({
+  name: "workspace-gateway-keys",
+  deleteWorkspaceData: deleteGatewayKeysForWorkspace,
 });
 
 const server = serve({
@@ -78,18 +83,29 @@ const server = serve({
     // headers; future scoped resources must use requireWorkspaceRequestScope.
     "/api/workspaces": { GET: tracked("workspace", "workspace.list", "Workspace list request", getWorkspaces), POST: tracked("workspace", "workspace.create", "Workspace creation request", postWorkspace) },
     "/api/workspaces/:workspaceId": { PATCH: tracked("workspace", "workspace.rename", "Workspace rename request", patchWorkspace), DELETE: tracked("workspace", "workspace.delete", "Workspace deletion request", deleteWorkspaceHttp) },
+    // Gateway keys are workspace-scoped and require an explicit workspace header.
+    // Their handlers enforce scoped auth/admission; audit logs are global and never include key material.
+    "/api/gateway-keys": { GET: tracked("gateway-keys", "gateway-keys.list", "Gateway key list request", getGatewayKeys), POST: tracked("gateway-keys", "gateway-keys.create", "Gateway key creation request", postGatewayKey) },
+    "/api/gateway-keys/:keyId": { PATCH: tracked("gateway-keys", "gateway-keys.update", "Gateway key update request", patchGatewayKey), DELETE: tracked("gateway-keys", "gateway-keys.delete", "Gateway key deletion request", deleteGatewayKeyHttp) },
+    "/api/gateway-keys/:keyId/reveal": { POST: tracked("gateway-keys", "gateway-keys.reveal", "Gateway key reveal request", revealGatewayKeyHttp) },
     "/api/logs": { GET: readLogs, DELETE: clearLogs },
     "/api/logs/global": { GET: readGlobalLogs, DELETE: clearGlobalLogs },
     "/api/logs/events": { POST: reportBrowserEvent },
     "/api/cliproxy/status": { GET: tracked("cliproxy", "cliproxy.status", "CLIProxy status request", cliproxyStatus, true) },
     "/api/cliproxy/versions": { GET: tracked("cliproxy", "cliproxy.versions", "CLIProxy version list request", cliproxyVersions) },
-    "/api/cliproxy/key": { GET: tracked("cliproxy", "cliproxy.key.read", "Gateway credential access request", cliproxyKey) },
     "/api/cliproxy/install": { POST: tracked("cliproxy", "cliproxy.install", "CLIProxy installation request", cliproxyInstall) },
     "/api/cliproxy/start": { POST: tracked("cliproxy", "cliproxy.start", "CLIProxy start request", cliproxyStart) },
     "/api/cliproxy/stop": { POST: tracked("cliproxy", "cliproxy.stop", "CLIProxy stop request", cliproxyStop) },
     "/api/cliproxy/restart": { POST: tracked("cliproxy", "cliproxy.restart", "CLIProxy restart request", cliproxyRestart) },
-    "/v1": tracked("gateway", "gateway.root", "Gateway root request", cliproxyRoot),
-    "/v1/*": loggedGateway(proxyCliproxy),
+    "/v1": { GET: gatewayRoot },
+    "/v1/chat/completions": { POST: (request) => gatewayUnavailable(request, "chat-completions", "POST") },
+    "/v1/completions": { POST: (request) => gatewayUnavailable(request, "completions", "POST") },
+    "/v1/responses": { POST: (request) => gatewayUnavailable(request, "responses", "POST") },
+    "/v1/messages": { POST: (request) => gatewayUnavailable(request, "messages", "POST") },
+    "/v1/models": { GET: (request) => gatewayUnavailable(request, "models", "GET") },
+    "/v1/embeddings": { POST: (request) => gatewayUnavailable(request, "embeddings", "POST") },
+    "/v1/images/generations": { POST: (request) => gatewayUnavailable(request, "images", "POST") },
+    "/v1/audio/transcriptions": { POST: (request) => gatewayUnavailable(request, "audio-transcriptions", "POST") },
     "/v0/management": tracked("gateway", "gateway.management.blocked", "Private management endpoint rejected", cliproxyManagementNotFound),
     "/v0/management/*": tracked("gateway", "gateway.management.blocked", "Private management endpoint rejected", cliproxyManagementNotFound),
     "/api/hello": {
@@ -98,6 +114,9 @@ const server = serve({
   },
   fetch(request) {
     const path = new URL(request.url).pathname;
+    const gatewayEndpoint = gatewayEndpoints[path];
+    if (gatewayEndpoint) return gatewayMethodNotAllowed(gatewayEndpoint.method);
+    if (path === "/v1") return gatewayMethodNotAllowed("GET");
     if (dashboardAliases.includes(path as typeof dashboardAliases[number])) {
       const destination = path === "/dashboard/tools" ? dashboardPaths["tool-overview"] : dashboardPaths.endpoint;
       return request.method === "GET" || request.method === "HEAD"

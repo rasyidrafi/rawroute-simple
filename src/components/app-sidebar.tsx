@@ -79,6 +79,7 @@ type Group = { label: string; items: Item[] };
 
 const globalItems: Item[] = [
   { route: "cliproxy", title: "CLIProxyAPI", icon: TerminalIcon },
+  { route: "system-logs", title: "System Logs", icon: LogsIcon },
   { route: "settings", title: "Settings", icon: SettingsIcon },
 ];
 

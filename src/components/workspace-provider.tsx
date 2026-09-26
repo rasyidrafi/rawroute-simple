@@ -10,6 +10,8 @@ type WorkspaceContextValue = {
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
   activeWorkspace: Workspace | null;
+  /** Increments after an accepted list result or confirmed workspace mutation. */
+  workspaceListVersion: number;
   isLoading: boolean;
   error: string | null;
   selectWorkspace: (workspaceId: string) => void;
@@ -49,6 +51,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(
     () => storedWorkspaceId(),
   );
+  const [workspaceListVersion, setWorkspaceListVersion] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const requestId = useRef(0);
@@ -69,6 +72,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (currentRequestId !== requestId.current) return;
       workspacesRef.current = nextWorkspaces;
       setWorkspaces(nextWorkspaces);
+      setWorkspaceListVersion((version) => version + 1);
       setActiveWorkspaceId((current) =>
         activeWorkspaceIdFor(nextWorkspaces, current ?? storedWorkspaceId()),
       );
@@ -97,6 +101,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     const nextWorkspaces = [...workspacesRef.current.filter((item) => item.id !== workspace.id), workspace];
     workspacesRef.current = nextWorkspaces;
     setWorkspaces(nextWorkspaces);
+    setWorkspaceListVersion((version) => version + 1);
     if (activeWorkspaceIdRef.current === selectedAtStart) setActiveWorkspaceId(workspace.id);
     return workspace;
   }, []);
@@ -107,6 +112,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     const nextWorkspaces = workspacesRef.current.map((item) => item.id === workspaceId ? workspace : item);
     workspacesRef.current = nextWorkspaces;
     setWorkspaces(nextWorkspaces);
+    setWorkspaceListVersion((version) => version + 1);
     return workspace;
   }, []);
 
@@ -116,6 +122,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     const next = removeWorkspaceFromState(workspacesRef.current, activeWorkspaceIdRef.current, workspaceId);
     workspacesRef.current = next.workspaces;
     setWorkspaces(next.workspaces);
+    setWorkspaceListVersion((version) => version + 1);
     setActiveWorkspaceId(next.activeWorkspaceId);
   }, []);
 
@@ -126,6 +133,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     workspaces,
     activeWorkspaceId: activeWorkspace?.id ?? null,
     activeWorkspace,
+    workspaceListVersion,
     isLoading,
     error,
     selectWorkspace,
@@ -142,6 +150,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     reload,
     renameWorkspace,
     selectWorkspace,
+    workspaceListVersion,
     workspaces,
   ]);
 

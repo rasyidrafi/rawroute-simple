@@ -4,16 +4,22 @@ This deployment builds one image from the official Bun image and runs the Bun ap
 
 ## Console Log
 
-The dashboard Console Log shows live server and dashboard activity, with severity
-filters, search, copy, and shared history clearing. It retains the latest 2,000
-events in memory for the running server; restarting the server resets the history.
+The workspace Console Log and global System Logs page show live server and dashboard
+activity, with severity filters, search, copy, and history clearing. Each retains
+the latest 2,000 events in memory for the running server; restarting the server resets
+the history.
 See [Logging](docs/logging.md) for event coverage and how to instrument new features.
 
 Workspace persistence and the scoped API contract are documented in
 [Workspaces](docs/workspaces.md). Workspace console history is isolated in the
 running server. Provider, OAuth, routing, pricing, and other dashboard controls
 remain browser-only workspace mock fixtures until their persisted APIs are added.
-CLIProxy lifecycle and the native `/v1` gateway remain global.
+Gateway keys are persisted workspace resources and authenticate recognized `/v1`
+requests to the owning active workspace. Provider routing is not configured yet,
+so an authenticated recognized request returns `503` with
+`workspace_routing_not_ready`; no request is forwarded to CLIProxy or a provider.
+CLIProxy lifecycle and its internally generated credential remain private
+management implementation details.
 
 ## Private Testing
 

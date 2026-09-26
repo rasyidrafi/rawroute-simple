@@ -1,7 +1,6 @@
 export {
   CLIPROXY_HOST,
   CLIPROXY_PORT,
-  getApiKey,
   getDataRoot,
   getStatus,
   getVersions,
