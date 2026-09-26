@@ -10,6 +10,7 @@ Bun.env.RAWROUTE_DATA_DIR = `/tmp/opencode/rawroute-auth-data-${crypto.randomUUI
 
 const { db: testDb } = await import("./db");
 const auth = await import("./auth");
+const { env } = await import("./env");
 const { cliproxyStatus } = await import("./cliproxy/http");
 const { readLogs, clearLogs, reportBrowserEvent } = await import("./logging/http");
 const { logs } = await import("./logging/store");
@@ -27,6 +28,8 @@ function makeRequest(
     contentType?: string | null;
     origin?: string | null;
     fetchSite?: string;
+    forwardedFor?: string;
+    connectingIp?: string;
     sessionToken?: string | null;
   } = {},
 ): TestRequest {
@@ -38,6 +41,8 @@ function makeRequest(
     headers.set("origin", options.origin ?? "http://localhost:3001");
   }
   if (options.fetchSite) headers.set("sec-fetch-site", options.fetchSite);
+  if (options.forwardedFor) headers.set("x-forwarded-for", options.forwardedFor);
+  if (options.connectingIp) headers.set("cf-connecting-ip", options.connectingIp);
 
   const request = new Request(`http://localhost:3001${path}`, {
     method: options.method ?? (options.body === undefined ? "GET" : "POST"),
@@ -66,9 +71,14 @@ function makeRequest(
   return request;
 }
 
-async function login(password = DEFAULT_PASSWORD): Promise<{ token: string; response: Response }> {
+async function login(
+  password = DEFAULT_PASSWORD,
+  peerAddress?: string | null,
+): Promise<{ token: string; response: Response }> {
   const request = makeRequest("/api/auth/login", { body: JSON.stringify({ password }) });
-  const response = await auth.login(request);
+  const response = peerAddress === undefined
+    ? await auth.login(request)
+    : await auth.loginFromPeer(request, peerAddress);
   return { token: request.readSessionToken() ?? "", response };
 }
 
@@ -199,6 +209,72 @@ test("concurrent first-start initialization inserts one default credential", asy
   const credentials = await testDb.execute("SELECT id FROM auth_credentials");
   expect(credentials.rows).toHaveLength(1);
   expect((await login()).response.status).toBe(200);
+});
+
+test("login limits use socket peers by default and trusted forwarding headers when enabled", async () => {
+  const wrongPassword = "not-the-default-password";
+  const spoofedForwardedFor = "203.0.113.8";
+  const requestFor = (forwardedFor = spoofedForwardedFor) =>
+    makeRequest("/api/auth/login", {
+      body: JSON.stringify({ password: wrongPassword }),
+      forwardedFor,
+    });
+
+  for (let index = 0; index < 5; index++) {
+    expect((await auth.loginFromPeer(requestFor(), "198.51.100.10")).status).toBe(401);
+  }
+  // With proxy headers untrusted, a spoofed shared header cannot merge socket clients.
+  expect((await auth.loginFromPeer(requestFor(), "198.51.100.11")).status).toBe(401);
+
+  const mutableEnv = env as { trustProxyHeaders: boolean };
+  const originalTrustProxyHeaders = mutableEnv.trustProxyHeaders;
+  mutableEnv.trustProxyHeaders = true;
+  try {
+    for (let index = 0; index < 5; index++) {
+      expect((await auth.loginFromPeer(requestFor("203.0.113.9"), "198.51.100.12")).status).toBe(401);
+    }
+    // Once explicitly trusted, the forwarded client is the limiter key across proxies.
+    expect((await auth.loginFromPeer(requestFor("203.0.113.9"), "198.51.100.13")).status).toBe(429);
+  } finally {
+    mutableEnv.trustProxyHeaders = originalTrustProxyHeaders;
+  }
+});
+
+test("concurrent invalid logins reserve the per-client failure budget before verification", async () => {
+  let passwordRecordReads = 0;
+  let fifthRead!: () => void;
+  let releaseReads!: () => void;
+  const fifthReadPromise = new Promise<void>((resolve) => {
+    fifthRead = resolve;
+  });
+  const readGate = new Promise<void>((resolve) => {
+    releaseReads = resolve;
+  });
+  const restore = interceptExecute(async (sql, run) => {
+    if (sql.includes("SELECT password_hash, is_default FROM auth_credentials")) {
+      passwordRecordReads += 1;
+      if (passwordRecordReads === 5) fifthRead();
+      await readGate;
+    }
+    return await run();
+  });
+
+  try {
+    const attempts = Array.from({ length: 12 }, () =>
+      auth.loginFromPeer(
+        makeRequest("/api/auth/login", { body: JSON.stringify({ password: "not-the-default-password" }) }),
+        "198.51.100.20",
+      ),
+    );
+    await fifthReadPromise;
+    releaseReads();
+    const statuses = (await Promise.all(attempts)).map((response) => response.status).sort();
+    expect(passwordRecordReads).toBe(5);
+    expect(statuses).toEqual([401, 401, 401, 401, 401, 429, 429, 429, 429, 429, 429, 429]);
+  } finally {
+    releaseReads();
+    restore();
+  }
 });
 
 test("startup password synchronization cannot overwrite a concurrent rotation", async () => {

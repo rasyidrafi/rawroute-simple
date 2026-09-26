@@ -135,6 +135,10 @@ function getFixtureExecutable(failing = false): string {
         process.env.CLIPROXY_FIXTURE_EXIT_AFTER_LAUNCH ?? "",
         10
       );
+      const exitAfterHealthyMs = Number.parseInt(
+        process.env.CLIPROXY_FIXTURE_EXIT_AFTER_HEALTHY_MS ?? "",
+        10
+      );
       let launchCount = 0;
       if (launchDirectory) {
         fs.mkdirSync(launchDirectory, { recursive: true });
@@ -161,9 +165,15 @@ function getFixtureExecutable(failing = false): string {
           return Response.json({ data: [] });
         },
       });
-      server = serve(${JSON.stringify(failing ? "0.0.0.0" : "127.0.0.1")});
-      if (readyPath) fs.writeFileSync(readyPath, "ready");
-      process.on("SIGTERM", () => {
+       server = serve(${JSON.stringify(failing ? "0.0.0.0" : "127.0.0.1")});
+       if (readyPath) fs.writeFileSync(readyPath, "ready");
+       if (Number.isSafeInteger(exitAfterHealthyMs) && exitAfterHealthyMs >= 0) {
+         setTimeout(() => {
+           server.stop();
+           process.exit(1);
+         }, exitAfterHealthyMs);
+       }
+       process.on("SIGTERM", () => {
         if (signalPath) {
           let currentTarget = null;
           try {
@@ -1630,6 +1640,57 @@ describe("CLIProxy service helpers", () => {
     expect(result.staleRestartWasSuppressed).toBe(true);
     expect(result.stoppedDesiredRunning).toBe(false);
     expect(result.stoppedProcessRunning).toBe(false);
+  }, FIXTURE_TEST_TIMEOUT_MS);
+
+  test("keeps restart attempts across healthy children that crash before stable uptime", async () => {
+    const result = await runFixtureScenario(({ dataRoot, executable, moduleUrl, root }) => `
+      ${serviceFixturePrelude(dataRoot, executable)}
+      const launchDirectory = path.join(${JSON.stringify(root)}, "launches");
+      process.env.CLIPROXY_FIXTURE_LAUNCH_DIRECTORY = launchDirectory;
+      process.env.CLIPROXY_FIXTURE_EXIT_AFTER_HEALTHY_MS = "500";
+      installVersion("1.2.3");
+      setCurrent("1.2.3");
+      writeState({
+        schemaVersion: 1,
+        desiredRunning: false,
+        installedVersion: "1.2.3",
+        pinnedVersion: null,
+      });
+      const nativeSetTimeout = globalThis.setTimeout;
+      globalThis.setTimeout = (callback, milliseconds, ...args) =>
+        [1_000, 2_000, 4_000, 8_000, 16_000].includes(Number(milliseconds))
+          ? nativeSetTimeout(callback, 0, ...args)
+          : nativeSetTimeout(callback, milliseconds, ...args);
+      try {
+        const service = await import(${JSON.stringify(moduleUrl)});
+        await service.initCliproxy();
+        await service.start();
+        await waitForAsyncCondition(
+          async () => (await service.getStatus()).lastError?.includes("restart limit reached") === true,
+          "the automatic restart limit",
+          10_000,
+        );
+        const status = await service.getStatus();
+        const launchesAtLimit = fs.readdirSync(launchDirectory).length;
+        const noFurtherLaunches = await noNewLaunches(launchDirectory, launchesAtLimit, 700);
+        await service.shutdownCliproxy();
+        console.log(JSON.stringify({
+          launchesAtLimit,
+          noFurtherLaunches,
+          restartAttempts: status.restartAttempts,
+          processRunning: status.processRunning,
+          lastError: status.lastError,
+        }));
+      } finally {
+        globalThis.setTimeout = nativeSetTimeout;
+      }
+    `);
+
+    expect(result.launchesAtLimit).toBe(6);
+    expect(result.noFurtherLaunches).toBe(true);
+    expect(result.restartAttempts).toBe(5);
+    expect(result.processRunning).toBe(false);
+    expect(result.lastError).toContain("restart limit reached");
   }, FIXTURE_TEST_TIMEOUT_MS);
 
   test("shutdown drains a pending restart without recreating child or manager records", async () => {

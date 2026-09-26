@@ -21,6 +21,7 @@ type PasswordRow = {
 
 type LoginAttempt = {
   fails: number;
+  inFlight: number;
   lockUntil: number;
   lockLevel: number;
   lastFailAt: number;
@@ -318,50 +319,87 @@ function assertSameOrigin(request: BunRequest, requireOrigin = false): void {
   }
 }
 
-function getClientAddress(request: BunRequest): string {
-  if (!env.trustProxyHeaders) return "unknown";
+function getClientAddress(request: BunRequest, peerAddress?: string | null): string {
+  if (env.trustProxyHeaders) {
+    const forwardedAddress =
+      request.headers.get("cf-connecting-ip")?.trim() ??
+      request.headers.get("x-forwarded-for")?.split(",", 1)[0]?.trim();
+    if (forwardedAddress) return forwardedAddress;
+  }
 
-  return (
-    request.headers.get("cf-connecting-ip")?.trim() ??
-    request.headers.get("x-forwarded-for")?.split(",", 1)[0]?.trim() ??
-    "unknown"
-  );
+  return peerAddress?.trim() || "unknown";
 }
 
 function cleanupLoginAttempts(now: number): void {
   for (const [key, attempt] of loginAttempts) {
-    if (attempt.lastFailAt + FAIL_WINDOW_MS <= now && attempt.lockUntil <= now) {
+    if (
+      attempt.inFlight === 0 &&
+      attempt.lastFailAt + FAIL_WINDOW_MS <= now &&
+      attempt.lockUntil <= now
+    ) {
       loginAttempts.delete(key);
     }
   }
 
   if (loginAttempts.size <= MAX_LOGIN_ATTEMPT_ENTRIES) return;
 
-  const oldestKey = loginAttempts.keys().next().value;
-  if (oldestKey) loginAttempts.delete(oldestKey);
+  for (const [key, attempt] of loginAttempts) {
+    if (attempt.inFlight === 0) {
+      loginAttempts.delete(key);
+      break;
+    }
+  }
 }
 
-function checkLoginRateLimit(key: string): void {
+function tooManyAttemptsError(retryAfterSeconds?: number): AuthError {
+  return new AuthError("Too many failed attempts. Try again later.", 429, retryAfterSeconds);
+}
+
+function admitLoginAttempt(key: string): void {
   const now = Date.now();
   cleanupLoginAttempts(now);
   const attempt = loginAttempts.get(key);
 
-  if (!attempt || attempt.lockUntil <= now) return;
+  if (attempt && attempt.lockUntil > now) {
+    throw tooManyAttemptsError(Math.ceil((attempt.lockUntil - now) / 1000));
+  }
+  if (attempt && attempt.fails + attempt.inFlight >= MAX_FAILS_BEFORE_LOCK) {
+    throw tooManyAttemptsError();
+  }
+  if (!attempt && loginAttempts.size >= MAX_LOGIN_ATTEMPT_ENTRIES) {
+    throw tooManyAttemptsError();
+  }
 
-  throw new AuthError(
-    "Too many failed attempts. Try again later.",
-    429,
-    Math.ceil((attempt.lockUntil - now) / 1000),
-  );
+  const admission = attempt ?? { fails: 0, inFlight: 0, lockUntil: 0, lockLevel: 0, lastFailAt: 0 };
+  admission.inFlight += 1;
+  loginAttempts.set(key, admission);
 }
 
-function recordFailedLogin(key: string): void {
+function releaseLoginAttempt(key: string, outcome: "failed" | "succeeded" | "aborted"): void {
   const now = Date.now();
   const current = loginAttempts.get(key);
+  if (!current) return;
+  current.inFlight = Math.max(0, current.inFlight - 1);
+
+  if (outcome === "succeeded") {
+    current.fails = 0;
+    current.lockUntil = 0;
+    current.lockLevel = 0;
+    current.lastFailAt = 0;
+    if (current.inFlight === 0) loginAttempts.delete(key);
+    return;
+  }
+  if (outcome === "aborted") {
+    if (current.inFlight === 0 && current.lastFailAt + FAIL_WINDOW_MS <= now && current.lockUntil <= now) {
+      loginAttempts.delete(key);
+    }
+    return;
+  }
+
   const attempt =
-    current && current.lastFailAt + FAIL_WINDOW_MS > now
+    current.lastFailAt + FAIL_WINDOW_MS > now
       ? current
-      : { fails: 0, lockUntil: 0, lockLevel: 0, lastFailAt: 0 };
+      : { ...current, fails: 0, lockUntil: 0, lockLevel: 0, lastFailAt: 0 };
 
   attempt.fails += 1;
   attempt.lastFailAt = now;
@@ -374,10 +412,6 @@ function recordFailedLogin(key: string): void {
   }
 
   loginAttempts.set(key, attempt);
-}
-
-function clearFailedLogin(key: string): void {
-  loginAttempts.delete(key);
 }
 
 async function hashToken(token: string): Promise<string> {
@@ -522,23 +556,28 @@ function errorResponse(error: unknown): Response {
   );
 }
 
-export async function login(request: BunRequest): Promise<Response> {
+async function processLogin(request: BunRequest, peerAddress?: string | null): Promise<Response> {
+  let loginKey: string | undefined;
+  let admitted = false;
   try {
     assertSameOrigin(request);
     const password = await readPassword(request);
-    const loginKey = `ip:${getClientAddress(request)}`;
-    checkLoginRateLimit(loginKey);
+    loginKey = `ip:${getClientAddress(request, peerAddress)}`;
+    admitLoginAttempt(loginKey);
+    admitted = true;
 
     const passwordRecord = await getPasswordRecord();
     const passwordHash = passwordRecord?.password_hash ?? (await dummyPasswordHash);
     const passwordMatches = await Bun.password.verify(password, passwordHash);
 
     if (!passwordMatches) {
-      recordFailedLogin(loginKey);
+      releaseLoginAttempt(loginKey, "failed");
+      admitted = false;
       throw new AuthError("Invalid password.", 401);
     }
 
-    clearFailedLogin(loginKey);
+    releaseLoginAttempt(loginKey, "succeeded");
+    admitted = false;
     setSessionCookie(request, await createSession(passwordHash));
     return jsonResponse({
       success: true,
@@ -547,8 +586,19 @@ export async function login(request: BunRequest): Promise<Response> {
       defaultPasswordHint: defaultPasswordHint(passwordRecord),
     });
   } catch (error) {
+    if (admitted && loginKey) releaseLoginAttempt(loginKey, "aborted");
     return errorResponse(error);
   }
+}
+
+/** Uses the direct peer address supplied by the Bun server rather than request headers by default. */
+export async function loginFromPeer(request: BunRequest, peerAddress?: string | null): Promise<Response> {
+  return await processLogin(request, peerAddress);
+}
+
+/** Kept as a one-argument handler for callers that do not have server request context. */
+export async function login(request: BunRequest): Promise<Response> {
+  return await processLogin(request);
 }
 
 export async function logout(request: BunRequest): Promise<Response> {

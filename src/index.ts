@@ -1,6 +1,6 @@
 import { serve } from "bun";
 import index from "./index.html";
-import { changePassword, ensureAuthSchema, ensureDefaultPassword, login, logout, status } from "./lib/auth";
+import { changePassword, ensureAuthSchema, ensureDefaultPassword, loginFromPeer, logout, status } from "./lib/auth";
 import {
   cliproxyInstall,
   cliproxyKey,
@@ -56,7 +56,11 @@ const server = serve({
         }
       },
     },
-    "/api/auth/login": { POST: tracked("auth", "auth.login", "Sign-in request", login) },
+    "/api/auth/login": {
+      POST: tracked("auth", "auth.login", "Sign-in request", (request, server) =>
+        loginFromPeer(request, server.requestIP(request)?.address),
+      ),
+    },
     "/api/auth/logout": { POST: tracked("auth", "auth.logout", "Sign-out request", logout) },
     "/api/auth/password": { POST: tracked("auth", "auth.password.change", "Password-change request (success revokes all sessions)", changePassword) },
     "/api/auth/status": { GET: tracked("auth", "auth.status", "Session status request", status, true) },

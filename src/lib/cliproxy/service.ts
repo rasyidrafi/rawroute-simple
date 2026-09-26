@@ -648,7 +648,6 @@ async function startCurrentVersion(): Promise<void> {
 
   try {
     await waitUntilHealthy(record);
-    restartAttempts = 0;
     lastError = null;
   } catch (error) {
     await stopActiveChild();
