@@ -2,7 +2,14 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { workspaceApi, type Workspace } from "@/lib/workspace-api";
-import { activeWorkspaceIdFor, removeWorkspaceFromState } from "@/lib/workspace-state";
+import {
+  activeWorkspaceIdFor,
+  beginWorkspaceLoadingGeneration,
+  isCurrentWorkspaceRequest,
+  nextWorkspaceRequestGeneration,
+  removeWorkspaceFromState,
+  settleWorkspaceLoadingGeneration,
+} from "@/lib/workspace-state";
 
 const ACTIVE_WORKSPACE_STORAGE_KEY = "rawroute.active-workspace-id";
 
@@ -52,7 +59,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     () => storedWorkspaceId(),
   );
   const [workspaceListVersion, setWorkspaceListVersion] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
+  const [loadingGeneration, setLoadingGeneration] = useState<number | null>(0);
   const [error, setError] = useState<string | null>(null);
   const requestId = useRef(0);
   const workspacesRef = useRef<Workspace[]>([]);
@@ -63,13 +70,20 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     persistWorkspaceId(activeWorkspaceId);
   }, [activeWorkspaceId]);
 
+  const invalidateWorkspaceReloads = useCallback(() => {
+    requestId.current = nextWorkspaceRequestGeneration(requestId.current);
+    // An invalidated request cannot clear a newer loading generation.
+    setLoadingGeneration(null);
+  }, []);
+
   const reload = useCallback(async () => {
-    const currentRequestId = ++requestId.current;
-    setIsLoading(true);
+    const currentRequestId = nextWorkspaceRequestGeneration(requestId.current);
+    requestId.current = currentRequestId;
+    setLoadingGeneration(beginWorkspaceLoadingGeneration(currentRequestId));
     setError(null);
     try {
       const nextWorkspaces = await workspaceApi.list();
-      if (currentRequestId !== requestId.current) return;
+      if (!isCurrentWorkspaceRequest(currentRequestId, requestId.current)) return;
       workspacesRef.current = nextWorkspaces;
       setWorkspaces(nextWorkspaces);
       setWorkspaceListVersion((version) => version + 1);
@@ -77,10 +91,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         activeWorkspaceIdFor(nextWorkspaces, current ?? storedWorkspaceId()),
       );
     } catch (loadError) {
-      if (currentRequestId !== requestId.current) return;
+      if (!isCurrentWorkspaceRequest(currentRequestId, requestId.current)) return;
       setError(message(loadError));
     } finally {
-      if (currentRequestId === requestId.current) setIsLoading(false);
+      setLoadingGeneration((current) =>
+        settleWorkspaceLoadingGeneration(current, currentRequestId),
+      );
     }
   }, []);
 
@@ -97,38 +113,49 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const createWorkspace = useCallback(async (name: string) => {
     // Keep a later user selection intact if this global mutation resolves late.
     const selectedAtStart = activeWorkspaceIdRef.current;
+    invalidateWorkspaceReloads();
     const workspace = await workspaceApi.create(name);
     const nextWorkspaces = [...workspacesRef.current.filter((item) => item.id !== workspace.id), workspace];
     workspacesRef.current = nextWorkspaces;
     setWorkspaces(nextWorkspaces);
     setWorkspaceListVersion((version) => version + 1);
     if (activeWorkspaceIdRef.current === selectedAtStart) setActiveWorkspaceId(workspace.id);
+    // Also invalidate refreshes that started while the mutation was in flight.
+    invalidateWorkspaceReloads();
+    setError(null);
     return workspace;
-  }, []);
+  }, [invalidateWorkspaceReloads]);
 
   const renameWorkspace = useCallback(async (workspaceId: string, name: string) => {
     // workspaceId is captured by the caller, never read from the current selector.
+    invalidateWorkspaceReloads();
     const workspace = await workspaceApi.rename(workspaceId, name);
     const nextWorkspaces = workspacesRef.current.map((item) => item.id === workspaceId ? workspace : item);
     workspacesRef.current = nextWorkspaces;
     setWorkspaces(nextWorkspaces);
     setWorkspaceListVersion((version) => version + 1);
+    invalidateWorkspaceReloads();
+    setError(null);
     return workspace;
-  }, []);
+  }, [invalidateWorkspaceReloads]);
 
   const deleteWorkspace = useCallback(async (workspaceId: string, confirmation: string) => {
     // workspaceId is captured by the caller, so deleting A cannot remove B after a switch.
+    invalidateWorkspaceReloads();
     await workspaceApi.remove(workspaceId, confirmation);
     const next = removeWorkspaceFromState(workspacesRef.current, activeWorkspaceIdRef.current, workspaceId);
     workspacesRef.current = next.workspaces;
     setWorkspaces(next.workspaces);
     setWorkspaceListVersion((version) => version + 1);
     setActiveWorkspaceId(next.activeWorkspaceId);
-  }, []);
+    invalidateWorkspaceReloads();
+    setError(null);
+  }, [invalidateWorkspaceReloads]);
 
   const activeWorkspace = workspaces.find(
     (workspace) => workspace.id === activeWorkspaceId && workspace.status === "active",
   ) ?? null;
+  const isLoading = loadingGeneration !== null;
   const value = useMemo<WorkspaceContextValue>(() => ({
     workspaces,
     activeWorkspaceId: activeWorkspace?.id ?? null,

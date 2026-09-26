@@ -73,6 +73,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Spinner } from "@/components/ui/spinner";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type Item = { route: DashboardRoute; title: string; icon: LucideIcon };
 type Group = { label: string; items: Item[] };
@@ -157,7 +158,9 @@ export function AppSidebar({
   const [logoutOpen, setLogoutOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const groups = app === "ai" ? aiGroups : toolGroups;
-  const workspaceLabel = activeWorkspace?.name ?? (isLoading ? "Loading workspaces…" : "Workspaces unavailable");
+  const hasWorkspaces = workspaces.length > 0;
+  const isInitialWorkspaceLoading = isLoading && !hasWorkspaces;
+  const workspaceLabel = activeWorkspace?.name ?? (isInitialWorkspaceLoading ? "Loading workspaces…" : "Workspaces unavailable");
 
   function navigate(next: DashboardRoute) {
     onNavigate(next);
@@ -228,10 +231,10 @@ export function AppSidebar({
                       <span className="flex size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
                         <RouteIcon />
                       </span>
-                      <span className="grid flex-1 text-left text-sm leading-tight">
-                        <span className="truncate font-semibold">RawRoute</span>
-                        <span className="truncate text-xs">{workspaceLabel} · {app === "ai" ? "AI Gateway" : "Tool Gateway"}</span>
-                      </span>
+                       <span className="grid flex-1 text-left text-sm leading-tight">
+                         <span className="truncate font-semibold">RawRoute</span>
+                         {isInitialWorkspaceLoading ? <Skeleton className="mt-1 h-3 w-32" /> : <span className="truncate text-xs">{workspaceLabel} · {app === "ai" ? "AI Gateway" : "Tool Gateway"}</span>}
+                       </span>
                       <ChevronDownIcon className="ml-auto text-muted-foreground" />
                     </SidebarMenuButton>
                   }
@@ -239,9 +242,9 @@ export function AppSidebar({
                 <DropdownMenuContent className="w-64" align="start" side={isMobile ? "bottom" : "right"}>
                   <DropdownMenuGroup>
                     <DropdownMenuLabel>Workspaces</DropdownMenuLabel>
-                    {isLoading ? (
-                      <DropdownMenuItem disabled><Spinner data-icon="inline-start" />Loading workspaces…</DropdownMenuItem>
-                    ) : error ? (
+                    {isInitialWorkspaceLoading ? (
+                      <WorkspacePickerSkeleton />
+                    ) : error && !hasWorkspaces ? (
                       <DropdownMenuItem onClick={() => void reload()}>Retry loading workspaces</DropdownMenuItem>
                     ) : (
                       <DropdownMenuRadioGroup value={activeWorkspaceId ?? ""} onValueChange={selectWorkspace}>
@@ -254,13 +257,15 @@ export function AppSidebar({
                         ))}
                       </DropdownMenuRadioGroup>
                     )}
-                    <DropdownMenuItem disabled={isLoading} onClick={() => openWorkspaceDialog("create")}>
+                    {!isInitialWorkspaceLoading && isLoading && <DropdownMenuItem disabled><Spinner data-icon="inline-start" />Refreshing workspaces…</DropdownMenuItem>}
+                    {!isInitialWorkspaceLoading && error && hasWorkspaces && <DropdownMenuItem onClick={() => void reload()}>Retry workspace refresh</DropdownMenuItem>}
+                    <DropdownMenuItem disabled={isInitialWorkspaceLoading} onClick={() => openWorkspaceDialog("create")}>
                       <PlusIcon data-icon="inline-start" />Add New Workspace
                     </DropdownMenuItem>
-                    <DropdownMenuItem disabled={!activeWorkspace || activeWorkspace.isDefault || isLoading} onClick={() => openWorkspaceDialog("rename")}>
+                    <DropdownMenuItem disabled={!activeWorkspace || activeWorkspace.isDefault || isInitialWorkspaceLoading} onClick={() => openWorkspaceDialog("rename")}>
                       <PencilIcon data-icon="inline-start" />Rename Workspace
                     </DropdownMenuItem>
-                    <DropdownMenuItem disabled={!activeWorkspace || activeWorkspace.isDefault || isLoading} variant="destructive" onClick={() => openWorkspaceDialog("delete")}>
+                    <DropdownMenuItem disabled={!activeWorkspace || activeWorkspace.isDefault || isInitialWorkspaceLoading} variant="destructive" onClick={() => openWorkspaceDialog("delete")}>
                       <Trash2Icon data-icon="inline-start" />Delete Workspace
                     </DropdownMenuItem>
                   </DropdownMenuGroup>
@@ -324,6 +329,15 @@ export function AppSidebar({
       />
     </>
   );
+}
+
+function WorkspacePickerSkeleton() {
+  return <div aria-busy="true" aria-label="Loading workspaces" className="flex flex-col gap-1 px-1 py-1">
+    {[1, 2, 3].map((item) => <div key={item} className="flex h-8 items-center gap-2 rounded-md px-2">
+      <Skeleton className="size-4" />
+      <Skeleton className={item === 1 ? "h-3 w-28" : "h-3 w-36"} />
+    </div>)}
+  </div>;
 }
 
 function WorkspaceDialogs({

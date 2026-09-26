@@ -17,6 +17,7 @@ import {
   FieldLabel,
 } from "@/components/ui/field"
 import { PasswordInput } from "@/components/password-input"
+import { Spinner } from "@/components/ui/spinner"
 
 export function LoginForm({
   password,
@@ -71,7 +72,7 @@ export function LoginForm({
               </Field>
               <Field>
                 <Button className="w-full" type="submit" disabled={isLoading}>
-                  {isLoading ? null : <KeyRoundIcon />}
+                  {isLoading ? <Spinner data-icon="inline-start" /> : <KeyRoundIcon />}
                   {isLoading ? "Signing in..." : "Sign in"}
                 </Button>
                 {error && <FieldError>{error}</FieldError>}

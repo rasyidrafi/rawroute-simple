@@ -61,12 +61,6 @@ export const browserEvents = {
 
 export type BrowserEvent = keyof typeof browserEvents;
 
-export const dashboardPages = [
-  "endpoint", "providers", "codex", "routing", "usage", "budgets", "pricing",
-  "logs", "cliproxy", "system-logs", "settings", "tool-overview", "tool-tools",
-  "tool-connections", "tool-policies", "tool-activity", "tool-settings",
-] as const;
-
 export function formatLog(entry: LogEntry): string {
   const details = Object.entries(entry.details).map(([key, value]) => `${key}=${value}`).join(" ");
   return `${entry.time} ${entry.level.padEnd(5)} [${entry.source}] ${entry.message} event=${entry.event} origin=${entry.origin}${details ? ` ${details}` : ""}`;

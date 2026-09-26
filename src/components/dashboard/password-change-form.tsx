@@ -1,7 +1,6 @@
 "use client";
 
 import { useId, useState, type FormEvent } from "react";
-import { LoaderCircleIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DialogFooter } from "@/components/ui/dialog";
 import {
@@ -12,6 +11,7 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { PasswordInput } from "@/components/password-input";
+import { Spinner } from "@/components/ui/spinner";
 
 type PasswordChangeResponse = {
   success?: boolean;
@@ -383,5 +383,5 @@ function PasswordFormActions({
 }
 
 function ActionSpinner({ busy }: { busy: boolean }) {
-  return busy ? <LoaderCircleIcon data-icon="inline-start" className="animate-spin" /> : null;
+  return busy ? <Spinner data-icon="inline-start" /> : null;
 }

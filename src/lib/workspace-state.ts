@@ -57,3 +57,30 @@ export function updateWorkspaceCollection<T>(
     : update;
   return next === current ? collections : { ...collections, [workspaceId]: next };
 }
+
+/**
+ * A list response is authoritative only while no workspace mutation has
+ * crossed its request generation. Mutations invalidate before and after their
+ * server call so a refresh started on either side cannot restore stale rows.
+ */
+export function nextWorkspaceRequestGeneration(generation: number): number {
+  return generation + 1;
+}
+
+export function isCurrentWorkspaceRequest(
+  requestGeneration: number,
+  currentGeneration: number,
+): boolean {
+  return requestGeneration === currentGeneration;
+}
+
+export function beginWorkspaceLoadingGeneration(requestGeneration: number): number {
+  return requestGeneration;
+}
+
+export function settleWorkspaceLoadingGeneration(
+  loadingGeneration: number | null,
+  settledGeneration: number,
+): number | null {
+  return loadingGeneration === settledGeneration ? null : loadingGeneration;
+}

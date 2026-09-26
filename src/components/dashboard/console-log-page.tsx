@@ -10,6 +10,8 @@ import { FieldError } from "@/components/ui/field";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useConsoleLogs } from "@/hooks/use-console-logs";
@@ -35,14 +37,16 @@ function LogPanel({
   const [level, setLevel] = useState("ALL");
   const [live, setLive] = useState(true);
   const [confirmClear, setConfirmClear] = useState(false);
-  const { snapshot, error, busy, refresh, clear } = useConsoleLogs(live, scope);
+  const { snapshot, error, clearError, busy, isInitialLoading, isRefreshing, isClearing, refresh, clear } = useConsoleLogs(live, scope);
   const entries = snapshot?.entries ?? [];
   const visible = entries.filter((entry) =>
     (level === "ALL" || entry.level === level) && formatLog(entry).toLowerCase().includes(query.toLowerCase()));
 
   async function clearHistory() {
-    setConfirmClear(false);
-    if (await clear()) notify("Console history cleared");
+    if (await clear()) {
+      setConfirmClear(false);
+      notify("Console history cleared");
+    }
   }
 
   return (
@@ -59,7 +63,7 @@ function LogPanel({
             </div>
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="outline" disabled={busy} onClick={() => void refresh()}>
-                <RefreshCwIcon data-icon="inline-start" />{busy ? "Loading…" : "Refresh"}
+                {isRefreshing ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{isRefreshing ? "Loading…" : "Refresh"}
               </Button>
               <Button size="sm" variant="outline" disabled={!visible.length} onClick={async () => {
                 if (await copy(visible.map(formatLog).join("\n"), "Logs copied", { page: scope.kind === "workspace" ? "logs" : "system-logs", workspaceId: scope.kind === "workspace" ? scope.workspaceId : null })) {
@@ -102,13 +106,15 @@ function LogPanel({
             {error && <FieldError>{error} Existing entries may be stale. Use Refresh to retry.</FieldError>}
             <LogStatus snapshot={snapshot} count={visible.length} busy={busy} live={live} />
             <TabsContent value={level}>
-              <LogResults entries={visible} loaded={snapshot !== null} busy={busy} filtered={entries.length > 0} />
+              <LogResults entries={visible} loaded={snapshot !== null} initialLoading={isInitialLoading} filtered={entries.length > 0} />
             </TabsContent>
           </Tabs>
         </CardContent>
       </Card>
       <Confirm open={confirmClear} onOpenChange={setConfirmClear} title="Clear console log?"
         description={`This removes all retained ${scope.kind === "workspace" ? "workspace" : "global system"} history for every administrator, including entries hidden by filters. A history-cleared event will remain.`}
+        pending={isClearing}
+        error={clearError}
         onConfirm={() => void clearHistory()} />
       </div>
     </main>
@@ -125,18 +131,27 @@ function LogStatus({ snapshot, count, busy, live }: { snapshot: LogSnapshot | nu
   return <p className="text-xs text-muted-foreground" role="status">{message}</p>;
 }
 
-function LogResults({ entries, loaded, busy, filtered }: { entries: LogEntry[]; loaded: boolean; busy: boolean; filtered: boolean }) {
+function LogResults({ entries, loaded, initialLoading, filtered }: { entries: LogEntry[]; loaded: boolean; initialLoading: boolean; filtered: boolean }) {
   let empty = filtered ? "No entries match this filter." : "No events recorded yet.";
-  if (!loaded) empty = busy ? "Loading…" : "Logs are unavailable.";
+  if (!loaded) empty = "Logs are unavailable.";
   return (
     <div className="rounded-lg border bg-muted/20">
       <ScrollArea className="h-[min(55svh,36rem)] min-h-48">
-        <div className="p-4 font-mono text-xs leading-6" aria-label="Console log entries">
-          {entries.length ? entries.map((entry) => <LogLine key={entry.id} entry={entry} />) : <p className="text-muted-foreground">{empty}</p>}
+        <div className="p-4 font-mono text-xs leading-6" aria-busy={initialLoading || undefined} aria-label="Console log entries">
+          {initialLoading ? <ConsoleLogSkeleton /> : entries.length ? entries.map((entry) => <LogLine key={entry.id} entry={entry} />) : <p className="text-muted-foreground">{empty}</p>}
         </div>
       </ScrollArea>
     </div>
   );
+}
+
+function ConsoleLogSkeleton() {
+  return <div className="flex flex-col gap-3" aria-label="Loading console log entries">
+    {[
+      ["line-1", "w-11/12"], ["line-2", "w-4/5"], ["line-3", "w-full"], ["line-4", "w-9/12"],
+      ["line-5", "w-10/12"], ["line-6", "w-3/4"], ["line-7", "w-full"], ["line-8", "w-5/6"],
+    ].map(([id, width]) => <Skeleton key={id} className={cn("h-3", width)} />)}
+  </div>;
 }
 
 function LogLine({ entry }: { entry: LogEntry }) {

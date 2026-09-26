@@ -4,7 +4,8 @@ import type { LogSnapshot } from "@/lib/logging/types";
 export function useConsoleLogs(live: boolean, scope: { kind: "workspace"; workspaceId: string } | { kind: "global" }) {
   const [snapshot, setSnapshot] = useState<LogSnapshot | null>(null);
   const [error, setError] = useState<{ scopeKey: string; message: string } | null>(null);
-  const [phase, setPhase] = useState<"idle" | "loading">("idle");
+  const [clearError, setClearError] = useState<{ scopeKey: string; message: string } | null>(null);
+  const [phase, setPhase] = useState<"idle" | "loading" | "clearing">("idle");
   const pending = useRef<{ controller: AbortController; method: string } | null>(null);
 
   const scopeKey = scope.kind === "workspace" ? `workspace:${scope.workspaceId}` : "global";
@@ -15,7 +16,8 @@ export function useConsoleLogs(live: boolean, scope: { kind: "workspace"; worksp
     pending.current?.controller.abort();
     const controller = new AbortController();
     pending.current = { controller, method };
-    setPhase("loading");
+    setPhase(method === "DELETE" ? "clearing" : "loading");
+    if (method === "DELETE") setClearError(null);
     try {
       const response = await fetch(endpoint, {
         method, credentials: "same-origin", cache: "no-store",
@@ -31,11 +33,14 @@ export function useConsoleLogs(live: boolean, scope: { kind: "workspace"; worksp
       if (!Array.isArray(data.entries) || typeof data.capacity !== "number") throw new Error("Invalid console log response.");
       if (pending.current?.controller !== controller) return false;
       setSnapshot(data);
-        setError(null);
+      setError(null);
+      if (method === "DELETE") setClearError(null);
       return true;
     } catch (cause) {
       if (pending.current?.controller === controller && !controller.signal.aborted) {
-        setError({ scopeKey, message: cause instanceof Error ? cause.message : "Unable to load console logs." });
+        const requestError = cause instanceof Error ? cause.message : "Unable to load console logs.";
+        setError({ scopeKey, message: requestError });
+        if (method === "DELETE") setClearError({ scopeKey, message: requestError });
       }
       return false;
     } finally {
@@ -59,5 +64,16 @@ export function useConsoleLogs(live: boolean, scope: { kind: "workspace"; worksp
 
   const currentSnapshot = snapshot?.scope === scope.kind && snapshot.workspaceId === workspaceId ? snapshot : null;
   const currentError = error?.scopeKey === scopeKey ? error.message : null;
-  return { snapshot: currentSnapshot, error: currentError, busy: phase === "loading", refresh: () => load(), clear: () => load("DELETE") };
+  const currentClearError = clearError?.scopeKey === scopeKey ? clearError.message : null;
+  return {
+    snapshot: currentSnapshot,
+    error: currentError,
+    clearError: currentClearError,
+    busy: phase !== "idle",
+    isInitialLoading: currentSnapshot === null && phase === "loading",
+    isRefreshing: phase === "loading",
+    isClearing: phase === "clearing",
+    refresh: () => load(),
+    clear: () => load("DELETE"),
+  };
 }

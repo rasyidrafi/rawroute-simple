@@ -3,9 +3,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { Link } from "react-router";
 import { useWorkspace } from "@/components/workspace-provider";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Spinner } from "@/components/ui/spinner";
 import { collectionChanges } from "@/lib/logging/collection";
 import { reportEvent } from "@/lib/logging/client";
 import type { BrowserEvent } from "@/lib/logging/types";
@@ -16,12 +13,12 @@ import { CliproxyPage } from "@/components/dashboard/cliproxy-page";
 import { CodexProviders } from "@/components/dashboard/codex-page";
 import { ConsoleLog, SystemLogPanel } from "@/components/dashboard/console-log-page";
 import { EndpointKeys } from "@/components/dashboard/endpoint-page";
-import { Page } from "@/components/dashboard/page-ui";
 import { Pricing } from "@/components/dashboard/pricing-page";
 import { ProviderDetail, Providers } from "@/components/dashboard/providers-page";
 import { Routing } from "@/components/dashboard/routing-page";
 import { Settings } from "@/components/dashboard/settings-page";
 import { ToolGateway } from "@/components/dashboard/tool-gateway-page";
+import { WorkspaceUnavailable } from "@/components/dashboard/workspace-unavailable";
 import {
   initialAliases,
   initialBudgets,
@@ -53,7 +50,6 @@ type Props = {
 function cloneFixture<T>(value: T[]): T[] {
   return structuredClone(value);
 }
-
 /**
  * Workspace mock collections are browser-memory fixtures only. The map lives
  * here so fixtures survive page navigation and a switch back to their owner.
@@ -133,7 +129,7 @@ export function DashboardViews({
   const [priceGroups, setPriceGroups] = useWorkspaceCollection(activeWorkspaceId, workspaces, workspaceListVersion, initialPriceGroups, "pricing.changed");
 
   if (dashboardRouteMeta[route].scope === "workspace" && !activeWorkspaceId) {
-    return <WorkspaceUnavailable loading={isLoading} error={error} onRetry={reload} />;
+    return <WorkspaceUnavailable route={route} providerDetail={providerDetail} loading={isLoading} error={error} onRetry={reload} />;
   }
 
   return renderDashboardRoute({
@@ -201,32 +197,4 @@ function renderDashboardRoute({
   if (route === "logs" && workspaceId) return <ConsoleLog key={workspaceId} workspaceId={workspaceId} />;
   if (route === "settings") return <Settings onPasswordChanged={onPasswordChanged} />;
   return <ToolGateway key={workspaceId} route={route} onNavigate={onNavigate} />;
-}
-
-function WorkspaceUnavailable({
-  loading,
-  error,
-  onRetry,
-}: {
-  loading: boolean;
-  error: string | null;
-  onRetry: () => Promise<void>;
-}) {
-  return (
-    <Page>
-      <Card>
-        <CardHeader>
-          <CardTitle>{loading ? "Loading workspaces" : "Workspace unavailable"}</CardTitle>
-          <CardDescription>
-            {loading
-              ? "Loading the workspace selector before opening this workspace-scoped page."
-              : error ?? "No active workspace is available."}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {loading ? <Spinner /> : <Button onClick={() => void onRetry()}>Retry workspace loading</Button>}
-        </CardContent>
-      </Card>
-    </Page>
-  );
 }

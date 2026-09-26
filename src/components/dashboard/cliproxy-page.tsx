@@ -26,6 +26,7 @@ import {
   canInstallExactRelease,
   createInstallAction,
   lifecycleControlsBlocked,
+  releaseCatalogPresentation,
   releaseControlsBlocked,
   statusPollInterval,
   type CliproxyInstallAction,
@@ -56,6 +57,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 
 type StatusDetails = CliproxyStatus & {
   pid?: number | null;
@@ -210,7 +213,6 @@ export function CliproxyPage() {
       setStatus(await fetchStatus());
       setStatusError(null);
     } catch (error) {
-      setStatus(null);
       setStatusError(error instanceof Error ? error.message : "Could not load CLIProxy status.");
     } finally {
       setStatusRefreshing(false);
@@ -229,7 +231,6 @@ export function CliproxyPage() {
       );
       setVersionsError(null);
     } catch (error) {
-      setVersions(null);
       setVersionsError(error instanceof Error ? error.message : "Could not load CLIProxy versions.");
     } finally {
       setVersionsRefreshing(false);
@@ -258,7 +259,6 @@ export function CliproxyPage() {
         setStatusError(null);
       } catch (error) {
         if (!active) return;
-        setStatus(null);
         setStatusError(error instanceof Error ? error.message : "Could not load CLIProxy status.");
       } finally {
         if (active) {
@@ -301,6 +301,8 @@ export function CliproxyPage() {
   }
 
   const label = statusLabel(status);
+  const statusInitialLoading = status === null && statusRefreshing;
+  const versionsInitialLoading = versions === null && versionsRefreshing;
   const selectedRelease = versions?.versions.find(
     (release) => release.version === selectedVersion,
   );
@@ -348,8 +350,8 @@ export function CliproxyPage() {
             disabled={statusRefreshing || Boolean(busy)}
             onClick={() => void refreshStatus()}
           >
-            <RefreshCwIcon className={statusRefreshing ? "animate-spin" : ""} />
-            Recheck status
+            {statusRefreshing ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}
+            {statusRefreshing ? "Checking…" : "Recheck status"}
           </Button>
         </div>
 
@@ -364,7 +366,7 @@ export function CliproxyPage() {
                   : statusError}
               </p>
             </div>
-            <Button className="sm:shrink-0" size="sm" variant="outline" disabled={statusRefreshing || Boolean(busy)} onClick={() => void refreshStatus()}>Retry</Button>
+            <Button className="sm:shrink-0" size="sm" variant="outline" disabled={statusRefreshing || Boolean(busy)} onClick={() => void refreshStatus()}>{statusRefreshing && <Spinner data-icon="inline-start" />}Retry</Button>
           </div>
         )}
         {actionError && (
@@ -386,6 +388,7 @@ export function CliproxyPage() {
               label={label}
               busy={busy}
               blocked={blocked}
+              loading={statusInitialLoading}
               onAction={runAction}
               onRequestStop={() => setPendingAction({ type: "stop" })}
             />
@@ -393,22 +396,24 @@ export function CliproxyPage() {
           <CardContent className="min-w-0">
             <div className="flex min-w-0 flex-col gap-5">
             <ServiceAlerts status={status} port={port} />
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {statusInitialLoading ? <ServiceDetailsSkeleton /> : <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Detail label="Installed version" value={status?.version ?? "Not installed"} mono />
               <Detail label="Selected release" value={status?.pinnedVersion ? `${status.pinnedVersion} (pinned)` : "Latest"} />
               <Detail label="Loopback port" value={`${port}`} mono />
               <Detail label="Process ID" value={status?.pid ? `${status.pid}` : "Not exposed by status API"} mono />
-            </div>
+            </div>}
 
             <ReleaseManagementCard
               status={status}
               versions={versions}
               versionsError={versionsError}
               versionsRefreshing={versionsRefreshing}
+              versionsInitialLoading={versionsInitialLoading}
               blocked={blocked}
               releaseBlocked={releaseBlocked}
               latestIsCurrent={latestIsCurrent}
               selectedRelease={selectedRelease}
+              busy={busy}
               onRefresh={refreshVersions}
               onSelectVersion={setSelectedVersion}
               onConfirmInstall={confirmInstall}
@@ -417,7 +422,7 @@ export function CliproxyPage() {
           </CardContent>
         </Card>
 
-        <ConnectionDetailsCard status={status} port={port} />
+        <ConnectionDetailsCard status={status} port={port} loading={statusInitialLoading} />
       </div>
 
       <PendingActionDialog
@@ -439,6 +444,7 @@ function ServiceHeader({
   label,
   busy,
   blocked,
+  loading,
   onAction,
   onRequestStop,
 }: {
@@ -446,9 +452,12 @@ function ServiceHeader({
   label: string;
   busy: LifecycleAction | null;
   blocked: boolean;
+  loading: boolean;
   onAction: (action: ActionToRun) => Promise<void>;
   onRequestStop: () => void;
 }) {
+  if (loading) return <ServiceHeaderSkeleton />;
+
   return (
     <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
       <div className="flex items-start gap-3">
@@ -465,14 +474,26 @@ function ServiceHeader({
           <CardDescription className="mt-1">{serviceDescription(status)}</CardDescription>
         </div>
       </div>
-      <ServiceActionButtons
-        status={status}
-        blocked={blocked}
-        onAction={onAction}
+        <ServiceActionButtons
+          status={status}
+          blocked={blocked}
+          busy={busy}
+          onAction={onAction}
         onRequestStop={onRequestStop}
       />
     </div>
   );
+}
+
+function ServiceHeaderSkeleton() {
+  return <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between" aria-busy="true" aria-label="Loading CLIProxyAPI status">
+    <div className="flex items-start gap-3"><Skeleton className="size-11" /><div className="flex flex-col gap-2"><Skeleton className="h-5 w-52" /><Skeleton className="h-4 w-72 max-w-full" /></div></div>
+    <Skeleton className="h-8 w-20" />
+  </div>;
+}
+
+function ServiceDetailsSkeleton() {
+  return <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-busy="true" aria-label="Loading CLIProxyAPI details">{[1, 2, 3, 4].map((item) => <div key={item} className="rounded-lg border bg-background/70 px-3 py-2.5"><Skeleton className="h-3 w-24" /><Skeleton className="mt-2 h-4 w-32" /></div>)}</div>;
 }
 
 function serviceDescription(status: StatusDetails | null) {
@@ -503,11 +524,13 @@ function ServiceStatusBadge({
 function ServiceActionButtons({
   status,
   blocked,
+  busy,
   onAction,
   onRequestStop,
 }: {
   status: StatusDetails | null;
   blocked: boolean;
+  busy: LifecycleAction | null;
   onAction: (action: ActionToRun) => Promise<void>;
   onRequestStop: () => void;
 }) {
@@ -515,16 +538,16 @@ function ServiceActionButtons({
     <div className="flex flex-wrap gap-2 sm:justify-end">
       {status?.installed && !status.processRunning && (
         <Button disabled={blocked} onClick={() => void onAction({ type: "start" })}>
-          <PlayIcon /> Start
+          {busy === "start" ? <Spinner data-icon="inline-start" /> : <PlayIcon data-icon="inline-start" />} {busy === "start" ? "Starting…" : "Start"}
         </Button>
       )}
       {status?.processRunning && (
         <>
           <Button variant="outline" disabled={blocked} onClick={() => void onAction({ type: "restart" })}>
-            <RotateCwIcon /> Restart
+            {busy === "restart" ? <Spinner data-icon="inline-start" /> : <RotateCwIcon data-icon="inline-start" />} {busy === "restart" ? "Restarting…" : "Restart"}
           </Button>
           <Button variant="destructive" disabled={blocked} onClick={onRequestStop}>
-            <SquareIcon /> Stop
+            {busy === "stop" ? <Spinner data-icon="inline-start" /> : <SquareIcon data-icon="inline-start" />} {busy === "stop" ? "Stopping…" : "Stop"}
           </Button>
         </>
       )}
@@ -565,10 +588,12 @@ function ReleaseManagementCard({
   versions,
   versionsError,
   versionsRefreshing,
+  versionsInitialLoading,
   blocked,
   releaseBlocked,
   latestIsCurrent,
   selectedRelease,
+  busy,
   onRefresh,
   onSelectVersion,
   onConfirmInstall,
@@ -577,10 +602,12 @@ function ReleaseManagementCard({
   versions: CliproxyVersions | null;
   versionsError: string | null;
   versionsRefreshing: boolean;
+  versionsInitialLoading: boolean;
   blocked: boolean;
   releaseBlocked: boolean;
   latestIsCurrent: boolean;
   selectedRelease: CliproxyVersions["versions"][number] | undefined;
+  busy: LifecycleAction | null;
   onRefresh: () => Promise<void>;
   onSelectVersion: React.Dispatch<React.SetStateAction<string>>;
   onConfirmInstall: (requestVersion: string) => void;
@@ -591,6 +618,7 @@ function ReleaseManagementCard({
         versions={versions}
         error={versionsError}
         refreshing={versionsRefreshing}
+        initialLoading={versionsInitialLoading}
         blocked={blocked}
         onRefresh={onRefresh}
       />
@@ -600,6 +628,8 @@ function ReleaseManagementCard({
         releaseBlocked={releaseBlocked}
         latestIsCurrent={latestIsCurrent}
         selectedRelease={selectedRelease}
+        initialLoading={versionsInitialLoading}
+        busy={busy}
         onSelectVersion={onSelectVersion}
         onConfirmInstall={onConfirmInstall}
       />
@@ -611,22 +641,25 @@ function ReleaseCatalogStatus({
   versions,
   error,
   refreshing,
+  initialLoading,
   blocked,
   onRefresh,
 }: {
   versions: CliproxyVersions | null;
   error: string | null;
   refreshing: boolean;
+  initialLoading: boolean;
   blocked: boolean;
   onRefresh: () => Promise<void>;
 }) {
+  const catalog = releaseCatalogPresentation(versions?.latest ?? null, error);
+
   return (
     <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium">Release management</p>
-        <p className={`break-words text-xs ${error ? "text-destructive" : "text-muted-foreground"}`}>
-          {versions?.latest ? `Latest available: ${versions.latest}` : error ?? "Checking release catalog..."}
-        </p>
+        {initialLoading ? <Skeleton className="mt-1 h-3 w-44" /> : versions ? <p className="break-words text-xs text-muted-foreground">{catalog.summary}</p> : <p className="break-words text-xs text-destructive">{catalog.summary}</p>}
+        {catalog.staleError && <p role="alert" className="mt-1 break-words text-xs text-destructive">{catalog.staleError}</p>}
         {error && isAuthenticationError(error) && (
           <p className="mt-1 break-words text-xs text-muted-foreground">
             Your dashboard session may have expired. Refresh this page to sign in again.
@@ -634,7 +667,7 @@ function ReleaseCatalogStatus({
         )}
       </div>
       <Button className="sm:shrink-0" size="sm" variant="outline" disabled={blocked || refreshing} onClick={() => void onRefresh()}>
-        <RefreshCwIcon className={refreshing ? "animate-spin" : ""} />
+        {refreshing ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}
         {refreshing ? "Checking" : "Refresh releases"}
       </Button>
     </div>
@@ -647,6 +680,8 @@ function ReleaseInstallControls({
   releaseBlocked,
   latestIsCurrent,
   selectedRelease,
+  initialLoading,
+  busy,
   onSelectVersion,
   onConfirmInstall,
 }: {
@@ -655,14 +690,18 @@ function ReleaseInstallControls({
   releaseBlocked: boolean;
   latestIsCurrent: boolean;
   selectedRelease: CliproxyVersions["versions"][number] | undefined;
+  initialLoading: boolean;
+  busy: LifecycleAction | null;
   onSelectVersion: React.Dispatch<React.SetStateAction<string>>;
   onConfirmInstall: (requestVersion: string) => void;
 }) {
+  if (initialLoading) return <div className="grid min-w-0 gap-2 lg:grid-cols-2" aria-busy="true" aria-label="Loading CLIProxyAPI releases"><Skeleton className="h-8 w-full" /><div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-20" /></div></div>;
+
   return (
     <div className="grid min-w-0 gap-2 lg:grid-cols-2">
       <Button className="w-full" disabled={releaseBlocked || latestIsCurrent} onClick={() => versions && onConfirmInstall("latest")}>
-        <DownloadIcon />
-        {status?.installed ? "Update to latest" : "Install latest"}
+        {busy === "install" ? <Spinner data-icon="inline-start" /> : <DownloadIcon data-icon="inline-start" />}
+        {busy === "install" ? "Installing…" : status?.installed ? "Update to latest" : "Install latest"}
       </Button>
       <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
         <Select value={selectedRelease?.version ?? ""} onValueChange={(value) => value && onSelectVersion(value)} disabled={releaseBlocked || !versions?.versions.length}>
@@ -678,7 +717,7 @@ function ReleaseInstallControls({
           </SelectContent>
         </Select>
         <Button className="w-full sm:w-auto" variant="outline" disabled={releaseBlocked || !canInstallExactRelease(selectedRelease?.version ?? null, status?.version ?? null, status?.pinnedVersion ?? null)} onClick={() => selectedRelease && onConfirmInstall(selectedRelease.version)}>
-          Select
+          {busy === "install" && <Spinner data-icon="inline-start" />}Select
         </Button>
       </div>
     </div>
@@ -688,9 +727,11 @@ function ReleaseInstallControls({
 function ConnectionDetailsCard({
   status,
   port,
+  loading,
 }: {
   status: StatusDetails | null;
   port: number;
+  loading: boolean;
 }) {
   const health = status?.healthy ? "Healthy" : status?.processRunning ? "Not healthy" : "Not running";
 
@@ -703,11 +744,11 @@ function ConnectionDetailsCard({
         </CardDescription>
       </CardHeader>
       <CardContent className="min-w-0">
-        <div className="grid min-w-0 gap-3 lg:grid-cols-3">
+        {loading ? <div className="grid min-w-0 gap-3 lg:grid-cols-3" aria-busy="true" aria-label="Loading connection details">{[1, 2, 3].map((item) => <div key={item} className="rounded-lg border bg-background/70 px-3 py-2.5"><Skeleton className="h-3 w-24" /><Skeleton className="mt-2 h-4 w-full" /></div>)}</div> : <div className="grid min-w-0 gap-3 lg:grid-cols-3">
           <Detail label="Client base URL" value={`${typeof window === "undefined" ? "" : window.location.origin}/v1`} mono wrap copyable />
           <Detail label="Upstream listener" value={`127.0.0.1:${port}`} mono />
           <Detail label="Health" value={health} />
-        </div>
+        </div>}
       </CardContent>
     </Card>
   );
@@ -734,9 +775,9 @@ function PendingActionDialog({
           <AlertDialogDescription>{pendingActionDescription(action)}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction
-            disabled={blocked}
+            disabled={blocked || busy}
             variant={action?.type === "stop" ? "destructive" : "default"}
             onClick={() => {
               const confirmedAction = action;

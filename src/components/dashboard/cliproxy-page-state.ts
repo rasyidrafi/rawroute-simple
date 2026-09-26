@@ -104,3 +104,16 @@ export function canInstallExactRelease(
       !(selectedVersion === currentVersion && selectedVersion === pinnedVersion),
   );
 }
+
+export function releaseCatalogPresentation(
+  latestVersion: string | null,
+  error: string | null,
+): { summary: string; staleError: string | null } {
+  if (latestVersion) {
+    return {
+      summary: `Latest available: ${latestVersion}${error ? " · showing cached catalog" : ""}`,
+      staleError: error ? `Could not refresh releases. ${error}` : null,
+    };
+  }
+  return { summary: error ?? "Release catalog unavailable.", staleError: null };
+}

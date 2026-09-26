@@ -45,6 +45,15 @@ export const dashboardRouteMeta: Record<DashboardRoute, { scope: DashboardPageSc
   "tool-settings": { scope: "workspace" },
 };
 
+/**
+ * Resolves only declared dashboard route IDs. This deliberately does not accept
+ * inherited object properties or dynamic route labels such as provider-detail.
+ */
+export function dashboardScopeForPage(page: unknown): DashboardPageScope | undefined {
+  if (typeof page !== "string" || !Object.hasOwn(dashboardRouteMeta, page)) return undefined;
+  return dashboardRouteMeta[page as DashboardRoute].scope;
+}
+
 export const dashboardAliases = ["/", "/dashboard", "/dashboard/ai", "/dashboard/tools"] as const;
 export const providerDetailPath = "/dashboard/ai/providers/:providerId";
 

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { dashboardPage, dashboardPaths, dashboardRouteMeta, providerIdFromPath } from "./dashboard-routes";
+import { dashboardPage, dashboardPaths, dashboardRouteMeta, dashboardScopeForPage, providerIdFromPath } from "./dashboard-routes";
 
 test("each dashboard URL has a stable page ID and provider detail has a bounded segment", () => {
   for (const [id, path] of Object.entries(dashboardPaths)) expect(dashboardPage(path) === id).toBe(true);
@@ -17,6 +17,18 @@ test("route scope metadata keeps global lifecycle pages out of workspace scope",
   expect(dashboardRouteMeta.settings.scope).toBe("global");
   expect(dashboardRouteMeta.logs.scope).toBe("workspace");
   expect(dashboardRouteMeta.providers.scope).toBe("workspace");
+});
+
+test("route scope lookup accepts only declared own route IDs", () => {
+  for (const [page, meta] of Object.entries(dashboardRouteMeta)) {
+    expect(dashboardScopeForPage(page)).toBe(meta.scope);
+  }
+  for (const page of [
+    undefined, null, 1, true, {}, [], "unknown", "provider-detail",
+    "toString", "constructor", "hasOwnProperty", "__proto__",
+  ]) {
+    expect(dashboardScopeForPage(page)).toBeUndefined();
+  }
 });
 
 test("provider detail URLs decode exactly once, including encoded slashes", () => {

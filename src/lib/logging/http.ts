@@ -3,6 +3,7 @@ import { getCurrentSession } from "../auth";
 import { env } from "../env";
 import { RequestScopeError, requireGlobalRequestScope, requireWorkspaceRequestScope, runWithWorkspaceScope } from "../request-scope";
 import { admitWorkspaceWrite } from "../workspaces";
+import { browserEventScope } from "./browser-event-scope";
 import { logs } from "./store";
 import { browserEvents, type BrowserEvent, type LogDetails } from "./types";
 
@@ -168,25 +169,3 @@ export function reportBrowserEvent(request: BunRequest): Promise<Response> {
     return json({ success: true });
   });
 }
-
-const workspaceEvents = new Set<BrowserEvent>([
-  "providers.changed", "models.changed", "provider-keys.changed", "codex-models.changed", "codex-accounts.changed",
-  "aliases.changed", "combos.changed", "budgets.changed", "pricing.changed", "budgets.window", "budgets.unlimited",
-  "budgets.beyond-limits", "codex.authorize", "codex.credit", "logs.copied", "logs.paused", "logs.resumed",
-]);
-
-const endpointEvents = new Set<BrowserEvent>([
-  "gateway-key.copied", "gateway-keys.created", "gateway-keys.renamed", "gateway-keys.revealed", "gateway-keys.deleted",
-]);
-
-function browserEventScope(event: BrowserEvent, page: unknown): "global" | "workspace" | null {
-  if ((event === "dashboard.error" || event === "dashboard.rejection") && page === undefined) return "global";
-  if (page !== undefined && (typeof page !== "string" || (!globalPages.has(page) && !workspacePages.has(page)))) return null;
-  if (endpointEvents.has(event)) return page === "endpoint" ? "workspace" : null;
-  if (workspaceEvents.has(event)) return page === undefined || (page !== "endpoint" && workspacePages.has(page)) ? "workspace" : null;
-  if (typeof page !== "string") return null;
-  return globalPages.has(page) ? "global" : "workspace";
-}
-
-const globalPages = new Set(["cliproxy", "system-logs", "settings"]);
-const workspacePages = new Set(["endpoint", "providers", "codex", "routing", "usage", "budgets", "pricing", "logs", "tool-overview", "tool-tools", "tool-connections", "tool-policies", "tool-activity", "tool-settings"]);

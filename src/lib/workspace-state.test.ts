@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { workspaceScopedRequest, type Workspace } from "./workspace-api";
-import { activeWorkspaceIdFor, pruneWorkspaceCollections, removeWorkspaceFromState, updateWorkspaceCollection } from "./workspace-state";
+import { activeWorkspaceIdFor, beginWorkspaceLoadingGeneration, isCurrentWorkspaceRequest, nextWorkspaceRequestGeneration, pruneWorkspaceCollections, removeWorkspaceFromState, settleWorkspaceLoadingGeneration, updateWorkspaceCollection } from "./workspace-state";
 
 const defaultWorkspace: Workspace = {
   id: "default", name: "Default", isDefault: true, status: "active", createdAt: 1, updatedAt: 1,
@@ -58,4 +58,34 @@ test("future scoped requests use the caller-captured workspace ID", () => {
   const requestForB = workspaceScopedRequest("b");
   expect(new Headers(requestForA.headers).get("X-RawRoute-Workspace-Id")).toBe("a");
   expect(new Headers(requestForB.headers).get("X-RawRoute-Workspace-Id")).toBe("b");
+});
+
+test("create, rename, and delete invalidate background workspace refreshes before and after mutation", () => {
+  for (const mutation of ["create", "rename", "delete"]) {
+    let generation = 0;
+    const refreshBeforeMutation = nextWorkspaceRequestGeneration(generation);
+    generation = refreshBeforeMutation;
+
+    generation = nextWorkspaceRequestGeneration(generation);
+    expect(isCurrentWorkspaceRequest(refreshBeforeMutation, generation)).toBe(false);
+
+    const refreshDuringMutation = nextWorkspaceRequestGeneration(generation);
+    generation = refreshDuringMutation;
+    generation = nextWorkspaceRequestGeneration(generation);
+    expect(isCurrentWorkspaceRequest(refreshDuringMutation, generation)).toBe(false);
+    expect(mutation).toBeString();
+  }
+});
+
+test("a hung StrictMode reload cannot keep the latest failed reload loading", () => {
+  const firstRequest = nextWorkspaceRequestGeneration(0);
+  const latestRequest = nextWorkspaceRequestGeneration(firstRequest);
+  let loading: number | null = beginWorkspaceLoadingGeneration(firstRequest);
+
+  loading = beginWorkspaceLoadingGeneration(latestRequest);
+  expect(settleWorkspaceLoadingGeneration(loading, firstRequest)).toBe(latestRequest);
+
+  loading = settleWorkspaceLoadingGeneration(loading, latestRequest);
+  expect(loading).toBeNull();
+  expect(settleWorkspaceLoadingGeneration(loading, firstRequest)).toBeNull();
 });

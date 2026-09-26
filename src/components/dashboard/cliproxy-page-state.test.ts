@@ -4,6 +4,7 @@ import {
   createInstallAction,
   lifecycleControlsBlocked,
   releaseControlsBlocked,
+  releaseCatalogPresentation,
   statusPollInterval,
 } from "./cliproxy-page-state";
 
@@ -66,5 +67,12 @@ describe("CLIProxy dashboard lifecycle state", () => {
     expect(canInstallExactRelease("1.8.0", "1.8.0", "1.8.0")).toBe(false);
     expect(canInstallExactRelease("1.7.2", "1.8.0", null)).toBe(true);
     expect(canInstallExactRelease(null, "1.8.0", null)).toBe(false);
+  });
+
+  it("keeps the cached release catalog usable while exposing a failed refresh", () => {
+    expect(releaseCatalogPresentation("1.8.0", "Network unavailable")).toEqual({
+      summary: "Latest available: 1.8.0 · showing cached catalog",
+      staleError: "Could not refresh releases. Network unavailable",
+    });
   });
 });

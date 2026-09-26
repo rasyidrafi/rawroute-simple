@@ -13,6 +13,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Spinner } from "@/components/ui/spinner";
 
 export async function copy(value: string, label = "Copied", scope: BrowserLogDetails = {}) {
   try {
@@ -46,23 +47,28 @@ export function Confirm({
   title,
   description,
   onConfirm,
+  pending = false,
+  error,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
   description: string;
   onConfirm: () => void;
+  pending?: boolean;
+  error?: string | null;
 }) {
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
+    <AlertDialog open={open} onOpenChange={(nextOpen) => !pending && onOpenChange(nextOpen)}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{description}</AlertDialogDescription>
         </AlertDialogHeader>
+        {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm}>Confirm</AlertDialogAction>
+          <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+          <AlertDialogAction disabled={pending} onClick={onConfirm}>{pending && <Spinner data-icon="inline-start" />}Confirm</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
