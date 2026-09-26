@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
@@ -17,12 +17,12 @@ const maskedKeyValue = "••••••••••••••••••�
 
 export function EndpointKeys({ workspaceId }: { workspaceId: string }) {
   const {
-    keys, loading, listError, operationError, visibleSecrets, createOpen, createName,
+    keys, loading, listError, operationError, createOpen, createName,
     customValue, creating, createdKey, copyingCreated, renameTarget, renameValue,
     renaming, deleteTarget, pendingKeyId, setListVersion, setOperationError,
     setCreateOpen, setCreateName, setCustomValue, setCreatedKey, setCopyingCreated,
     setRenameTarget, setRenameValue, setDeleteTarget, closeCreate, createKey,
-    revealOrHide, copySecret, copyCreatedSecret, renameKey, deleteKey,
+    copySecret, copyCreatedSecret, renameKey, deleteKey,
   } = useEndpointKeys(workspaceId);
   const endpoint = typeof window === "undefined" ? "/v1" : `${window.location.origin}/v1`;
 
@@ -57,19 +57,11 @@ export function EndpointKeys({ workspaceId }: { workspaceId: string }) {
             <div className="rounded-lg border border-dashed p-8 text-center"><p className="font-medium">No gateway API keys</p><p className="mt-1 text-sm text-muted-foreground">Create a key before sending requests through this workspace.</p></div>
           ) : (
             <>{keys.map((key) => {
-                const secret = visibleSecrets[key.id];
                 const pending = pendingKeyId === key.id;
                 return <div key={key.id} className="flex items-center gap-3 rounded-lg border bg-muted/30 p-3">
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium">{key.name}</div>
-                    {secret ? (
-                      <div className="flex min-w-0 items-start gap-1">
-                        <code className="min-w-0 flex-1 select-text break-all text-xs text-muted-foreground">{secret}</code>
-                        <Button size="xs" variant="ghost" aria-label={`Hide ${key.name}`} disabled={pendingKeyId !== null} onClick={() => void revealOrHide(key)}>Hide</Button>
-                      </div>
-                    ) : (
-                      <Button size="xs" variant="ghost" className="max-w-full justify-start" aria-label={`Reveal ${key.name}`} disabled={pendingKeyId !== null} onClick={() => void revealOrHide(key)}>{pending ? <Spinner data-icon="inline-start" /> : <code className="block truncate text-xs text-muted-foreground">{maskedKeyValue}</code>}</Button>
-                    )}
+                    <code className="block truncate text-xs text-muted-foreground">{maskedKeyValue}</code>
                   </div>
                   <Button aria-label={`Copy ${key.name}`} size="icon-sm" variant="outline" disabled={pendingKeyId !== null} onClick={() => void copySecret(key)}>{pending ? <Spinner /> : <CopyIcon />}</Button>
                   <Button aria-label={`Edit ${key.name}`} size="icon-sm" variant="outline" disabled={pendingKeyId !== null} onClick={() => { setOperationError(null); setRenameTarget(key); setRenameValue(key.name); }}><PencilIcon /></Button>
@@ -84,17 +76,17 @@ export function EndpointKeys({ workspaceId }: { workspaceId: string }) {
       <Dialog open={createOpen} onOpenChange={(open) => { if (!open) closeCreate(); }}><DialogContent><form onSubmit={(event) => void createKey(event)}>
         <DialogHeader><DialogTitle>Create API key</DialogTitle><DialogDescription>Give this key a recognizable name. Leave the value blank to generate a secure key.</DialogDescription></DialogHeader>
         <FieldGroup className="mt-5">
-          <Field data-invalid={Boolean(operationError)}><FieldLabel htmlFor="gateway-key-name">Key name</FieldLabel><Input id="gateway-key-name" autoFocus value={createName} onChange={(event) => setCreateName(event.target.value)} aria-invalid={Boolean(operationError)} disabled={creating} placeholder="Production gateway" /></Field>
-          <Field><FieldLabel htmlFor="gateway-key-custom-value">Key value <span className="text-muted-foreground">(optional)</span></FieldLabel><Input id="gateway-key-custom-value" type="password" value={customValue} onChange={(event) => setCustomValue(event.target.value)} disabled={creating} autoComplete="new-password" placeholder="Optional custom secret" /><FieldDescription>Custom values must be 32–256 printable characters without whitespace.</FieldDescription>{operationError && <FieldError>{operationError}</FieldError>}</Field>
+          <Field data-invalid={Boolean(operationError)}><FieldLabel htmlFor="gateway-key-name">Key Name</FieldLabel><Input id="gateway-key-name" autoFocus value={createName} onChange={(event) => setCreateName(event.target.value)} aria-invalid={Boolean(operationError)} disabled={creating} maxLength={80} placeholder="Production gateway" /></Field>
+          <Field><FieldLabel htmlFor="gateway-key-custom-value">Key Value</FieldLabel><Input id="gateway-key-custom-value" value={customValue} onChange={(event) => setCustomValue(event.target.value)} disabled={creating} maxLength={256} placeholder="Optional custom secret" />{operationError && <FieldError>{operationError}</FieldError>}</Field>
         </FieldGroup>
         <DialogFooter><Button type="button" variant="outline" disabled={creating} onClick={closeCreate}>Cancel</Button><Button type="submit" disabled={creating || !createName.trim()}>{creating && <Spinner data-icon="inline-start" />}Create key</Button></DialogFooter>
       </form></DialogContent></Dialog>
 
-      <Dialog open={Boolean(createdKey)} onOpenChange={(open) => { if (!open) { setCreatedKey(null); setCopyingCreated(false); } }}><DialogContent><DialogHeader><DialogTitle>API key created</DialogTitle><DialogDescription>Copy this value now. You can reveal it again from the key value.</DialogDescription></DialogHeader>{createdKey && <div className="flex items-center gap-2 py-5"><code className="min-w-0 flex-1 break-all rounded-md border bg-muted/30 p-3 text-xs">{createdKey.secret}</code><Button aria-label="Copy created API key" size="icon-sm" variant="outline" disabled={copyingCreated} onClick={() => void copyCreatedSecret()}>{copyingCreated ? <Spinner /> : <CopyIcon />}</Button></div>}<DialogFooter><Button disabled={copyingCreated} onClick={() => setCreatedKey(null)}>Done</Button></DialogFooter></DialogContent></Dialog>
+      <Dialog open={Boolean(createdKey)} onOpenChange={(open) => { if (!open) { setCreatedKey(null); setCopyingCreated(false); } }}><DialogContent><DialogHeader><DialogTitle>API key created</DialogTitle><DialogDescription>Copy this value now. It will only be available from the admin dashboard.</DialogDescription></DialogHeader>{createdKey && <div className="flex items-center gap-2 py-5"><code className="min-w-0 flex-1 break-all rounded-md border bg-muted/30 p-3 text-xs">{createdKey.secret}</code><Button aria-label="Copy created API key" size="icon-sm" variant="outline" disabled={copyingCreated} onClick={() => void copyCreatedSecret()}>{copyingCreated ? <Spinner /> : <CopyIcon />}</Button></div>}<DialogFooter><Button disabled={copyingCreated} onClick={() => setCreatedKey(null)}>Done</Button></DialogFooter></DialogContent></Dialog>
 
       <Dialog open={Boolean(renameTarget)} onOpenChange={(open) => { if (!open && !renaming) { setRenameTarget(null); setRenameValue(""); setOperationError(null); } }}><DialogContent><form onSubmit={(event) => void renameKey(event)}>
-        <DialogHeader><DialogTitle>Rename gateway key</DialogTitle><DialogDescription>Changing a name does not change the key value.</DialogDescription></DialogHeader>
-        <FieldGroup className="mt-5"><Field data-invalid={Boolean(operationError)}><FieldLabel htmlFor="gateway-key-rename">Name</FieldLabel><Input id="gateway-key-rename" autoFocus value={renameValue} onChange={(event) => setRenameValue(event.target.value)} aria-invalid={Boolean(operationError)} disabled={renaming} />{operationError && <FieldError>{operationError}</FieldError>}</Field></FieldGroup>
+        <DialogHeader><DialogTitle>Edit API key name</DialogTitle><DialogDescription>The key value cannot be changed.</DialogDescription></DialogHeader>
+        <FieldGroup className="mt-5"><Field data-invalid={Boolean(operationError)}><FieldLabel htmlFor="gateway-key-rename">Key Name</FieldLabel><Input id="gateway-key-rename" autoFocus value={renameValue} onChange={(event) => setRenameValue(event.target.value)} aria-invalid={Boolean(operationError)} disabled={renaming} maxLength={80} />{operationError && <FieldError>{operationError}</FieldError>}</Field></FieldGroup>
         <DialogFooter><Button type="button" variant="outline" disabled={renaming} onClick={() => { setRenameTarget(null); setRenameValue(""); setOperationError(null); }}>Cancel</Button><Button type="submit" disabled={renaming || !renameValue.trim()}>{renaming && <Spinner data-icon="inline-start" />}Save name</Button></DialogFooter>
       </form></DialogContent></Dialog>
 

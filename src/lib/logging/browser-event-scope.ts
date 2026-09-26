@@ -8,7 +8,7 @@ export const workspaceEvents = new Set<BrowserEvent>([
 ]);
 
 export const endpointEvents = new Set<BrowserEvent>([
-  "gateway-key.copied", "gateway-keys.created", "gateway-keys.renamed", "gateway-keys.revealed", "gateway-keys.deleted",
+  "gateway-key.copied", "gateway-keys.created", "gateway-keys.renamed", "gateway-keys.deleted",
 ]);
 
 /**

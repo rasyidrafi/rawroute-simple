@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
-  cleanupDeletedGatewayKey,
   deleteGatewayKeyRequest,
   gatewayKeyFromResponse,
   gatewayKeyListFromResponse,
@@ -20,7 +19,6 @@ export function useEndpointKeys(workspaceId: string) {
   const [listVersion, setListVersion] = useState(0);
   const [listError, setListError] = useState<string | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
-  const [visibleSecrets, setVisibleSecrets] = useState<Record<string, string>>({});
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState("");
   const [customValue, setCustomValue] = useState("");
@@ -71,12 +69,11 @@ export function useEndpointKeys(workspaceId: string) {
 
   useEffect(() => {
     // The provider's active workspace is captured before each operation. On a
-    // switch, abort all work and clear drafts/secrets before loading the new owner.
+    // switch, abort all work and clear drafts before loading the new owner.
     activeWorkspaceId.current = workspaceId;
     for (const controller of controllers.current) controller.abort();
     controllers.current.clear();
     setKeys([]);
-    setVisibleSecrets({});
     setCreateOpen(false);
     setCreateName("");
     setCustomValue("");
@@ -146,14 +143,7 @@ export function useEndpointKeys(workspaceId: string) {
     }
   }
 
-  async function revealOrHide(key: GatewayKey) {
-    if (visibleSecrets[key.id]) {
-      setVisibleSecrets((current) => {
-        const { [key.id]: _secret, ...remaining } = current;
-        return remaining;
-      });
-      return;
-    }
+  async function copySecret(key: GatewayKey) {
     const scope = workspaceId;
     const controller = beginRequest();
     setPendingKeyId(key.id);
@@ -164,41 +154,15 @@ export function useEndpointKeys(workspaceId: string) {
       }, controller), scope);
       if (!result || result.key.id !== key.id) throw new Error("The gateway key service returned an invalid key.");
       if (!ownsRequest(scope, controller)) return;
-      setKeys((current) => current.map((item) => item.id === result.key.id ? result.key : item));
-      setVisibleSecrets((current) => ({ ...current, [result.key.id]: result.secret }));
-      reportEvent("gateway-keys.revealed", { page: "endpoint", workspaceId: scope });
-    } catch (error) {
-      if (ownsRequest(scope, controller)) setOperationError(error instanceof Error ? error.message : "Unable to reveal gateway key.");
-    } finally {
-      if (ownsRequest(scope, controller)) setPendingKeyId(null);
-    }
-  }
-
-  async function copySecret(key: GatewayKey) {
-    const scope = workspaceId;
-    const controller = beginRequest();
-    setPendingKeyId(key.id);
-    setOperationError(null);
-    try {
-      let secret = visibleSecrets[key.id];
-      if (!secret) {
-        const result = gatewayKeyResultFromResponse(await request<unknown>(scope, `/api/gateway-keys/${encodeURIComponent(key.id)}/reveal`, {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
-        }, controller), scope);
-        if (!result || result.key.id !== key.id) throw new Error("The gateway key service returned an invalid key.");
-        if (!ownsRequest(scope, controller)) return;
-        setKeys((current) => current.map((item) => item.id === result.key.id ? result.key : item));
-        secret = result.secret;
-      }
       if (!navigator.clipboard) throw new Error("Clipboard unavailable");
-      await navigator.clipboard.writeText(secret);
+      await navigator.clipboard.writeText(result.secret);
       if (!ownsRequest(scope, controller)) return;
       reportEvent("gateway-key.copied", { page: "endpoint", workspaceId: scope });
       notify("Gateway key copied");
     } catch {
       if (!ownsRequest(scope, controller)) return;
       reportEvent("dashboard.copy-failed", { page: "endpoint", workspaceId: scope });
-      setOperationError("Clipboard access failed. Reveal the key and copy it manually.");
+      setOperationError("Clipboard access failed.");
     } finally {
       controllers.current.delete(controller);
       if (ownsRequest(scope, controller)) setPendingKeyId(null);
@@ -219,7 +183,7 @@ export function useEndpointKeys(workspaceId: string) {
     } catch {
       if (activeWorkspaceId.current !== scope) return;
       reportEvent("dashboard.copy-failed", { page: "endpoint", workspaceId: scope });
-      setOperationError("Clipboard access failed. Copy the visible key manually.");
+      setOperationError("Clipboard access failed.");
     } finally {
       if (activeWorkspaceId.current === scope) setCopyingCreated(false);
     }
@@ -262,10 +226,8 @@ export function useEndpointKeys(workspaceId: string) {
     try {
       await deleteRequest(scope, target.id, controller);
       if (!ownsRequest(scope, controller)) return;
-      const cleanup = cleanupDeletedGatewayKey(keys, visibleSecrets, target.id);
-      setKeys(cleanup.keys);
-      setVisibleSecrets(cleanup.visibleSecrets);
-      setDeleteTarget(cleanup.deleteTarget);
+      setKeys((current) => current.filter((key) => key.id !== target.id));
+      setDeleteTarget(null);
       setCreatedKey((current) => current?.key.id === target.id ? null : current);
       reportEvent("gateway-keys.deleted", { page: "endpoint", workspaceId: scope, removed: 1 });
       notify("Gateway key deleted");
@@ -277,11 +239,11 @@ export function useEndpointKeys(workspaceId: string) {
   }
 
   return {
-    keys, loading, listError, operationError, visibleSecrets, createOpen, createName,
+    keys, loading, listError, operationError, createOpen, createName,
     customValue, creating, createdKey, copyingCreated, renameTarget, renameValue,
     renaming, deleteTarget, pendingKeyId, setListVersion, setOperationError,
     setCreateOpen, setCreateName, setCustomValue, setCreatedKey, setCopyingCreated,
     setRenameTarget, setRenameValue, setDeleteTarget, closeCreate, createKey,
-    revealOrHide, copySecret, copyCreatedSecret, renameKey, deleteKey,
+    copySecret, copyCreatedSecret, renameKey, deleteKey,
   };
 }

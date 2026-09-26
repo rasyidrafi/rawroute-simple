@@ -88,16 +88,3 @@ export async function deleteGatewayKeyRequest(
     signal,
   );
 }
-
-export function cleanupDeletedGatewayKey<Key extends { id: string }>(
-  keys: Key[],
-  visibleSecrets: Record<string, string>,
-  keyId: string,
-) {
-  const { [keyId]: _secret, ...remainingSecrets } = visibleSecrets;
-  return {
-    keys: keys.filter((key) => key.id !== keyId),
-    visibleSecrets: remainingSecrets,
-    deleteTarget: null,
-  };
-}

@@ -38,7 +38,6 @@ export const browserEvents = {
   "gateway-key.copied": "Workspace gateway key copied (value omitted)",
   "gateway-keys.created": "Workspace gateway key created",
   "gateway-keys.renamed": "Workspace gateway key renamed",
-  "gateway-keys.revealed": "Workspace gateway key revealed (value omitted)",
   "gateway-keys.deleted": "Workspace gateway key deleted",
   "providers.changed": "Local demo providers changed",
   "models.changed": "Local demo provider models changed",
