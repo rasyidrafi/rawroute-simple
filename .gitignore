@@ -6,3 +6,4 @@ dev.db
 .env.*
 !.env.example
 /.agents/skills/ask-bun
+/artifacts/e2e/

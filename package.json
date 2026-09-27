@@ -9,6 +9,7 @@
     "preview": "bash scripts/preview.sh",
     "start": "NODE_ENV=production bun src/index.ts",
     "build": "bun scripts/build.ts",
+    "test:e2e": "bun scripts/e2e.ts",
     "lint": "oxlint && CI=1 react-doctor --lint --scope full --yes --no-score --blocking error",
     "doctor": "react-doctor"
   },
