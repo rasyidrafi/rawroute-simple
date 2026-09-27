@@ -143,32 +143,6 @@ export function useEndpointKeys(workspaceId: string) {
     }
   }
 
-  async function copySecret(key: GatewayKey) {
-    const scope = workspaceId;
-    const controller = beginRequest();
-    setPendingKeyId(key.id);
-    setOperationError(null);
-    try {
-      const result = gatewayKeyResultFromResponse(await request<unknown>(scope, `/api/gateway-keys/${encodeURIComponent(key.id)}/reveal`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
-      }, controller), scope);
-      if (!result || result.key.id !== key.id) throw new Error("The gateway key service returned an invalid key.");
-      if (!ownsRequest(scope, controller)) return;
-      if (!navigator.clipboard) throw new Error("Clipboard unavailable");
-      await navigator.clipboard.writeText(result.secret);
-      if (!ownsRequest(scope, controller)) return;
-      reportEvent("gateway-key.copied", { page: "endpoint", workspaceId: scope });
-      notify("Gateway key copied");
-    } catch {
-      if (!ownsRequest(scope, controller)) return;
-      reportEvent("dashboard.copy-failed", { page: "endpoint", workspaceId: scope });
-      setOperationError("Clipboard access failed.");
-    } finally {
-      controllers.current.delete(controller);
-      if (ownsRequest(scope, controller)) setPendingKeyId(null);
-    }
-  }
-
   async function copyCreatedSecret() {
     const result = createdKey;
     const scope = workspaceId;
@@ -244,6 +218,6 @@ export function useEndpointKeys(workspaceId: string) {
     renaming, deleteTarget, pendingKeyId, setListVersion, setOperationError,
     setCreateOpen, setCreateName, setCustomValue, setCreatedKey, setCopyingCreated,
     setRenameTarget, setRenameValue, setDeleteTarget, closeCreate, createKey,
-    copySecret, copyCreatedSecret, renameKey, deleteKey,
+    copyCreatedSecret, renameKey, deleteKey,
   };
 }

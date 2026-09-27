@@ -269,7 +269,7 @@ test("rejects tampered ciphertext and keeps deleted tombstones out of reveal and
   expect(Number(tombstone.rows[0]?.deleted_at)).toBeGreaterThan(0);
 });
 
-test("scoped admin API requires a changed password/origin, never lists plaintext, and explicitly reveals", async () => {
+test("scoped admin API requires a changed password/origin and never lists plaintext after creation", async () => {
   const defaultPassword = await gatewayHttp.postGatewayKey(request("/api/gateway-keys", {
     body: JSON.stringify({ name: "Denied" }), workspaceId: "default",
   }));
@@ -299,16 +299,7 @@ test("scoped admin API requires a changed password/origin, never lists plaintext
   const listed = await gatewayHttp.getGatewayKeys(request("/api/gateway-keys", { sessionToken: token, workspaceId: "default" }));
   const listBody = await listed.json() as { keys: Array<Record<string, unknown>> };
   expect(listBody.keys[0]).not.toHaveProperty("secret");
-  const revealed = await gatewayHttp.revealGatewayKeyHttp(request(`/api/gateway-keys/${createdBody.key.id}/reveal`, {
-    body: "{}", sessionToken: token, workspaceId: "default",
-  }));
-  expect((await revealed.json() as { secret: string }).secret).toBe(createdBody.secret);
-
-  const other = await workspaces.createWorkspace("Wrong key workspace");
-  const wrongWorkspaceReveal = await gatewayHttp.revealGatewayKeyHttp(request(`/api/gateway-keys/${createdBody.key.id}/reveal`, {
-    body: "{}", sessionToken: token, workspaceId: other.id,
-  }));
-  expect(wrongWorkspaceReveal.status).toBe(404);
+  expect(createdBody.secret).toBe("E".repeat(32));
   const oversized = await gatewayHttp.postGatewayKey(request("/api/gateway-keys", {
     body: JSON.stringify({ name: "Oversized", value: "F".repeat(4_096) }), sessionToken: token, workspaceId: "default",
   }));
@@ -443,7 +434,7 @@ test("gateway allowlist, root, deletion, and database failures are closed", asyn
     "/v1/images/generations": { endpoint: "images", method: "POST" },
     "/v1/audio/transcriptions": { endpoint: "audio-transcriptions", method: "POST" },
   });
-  expect(publicGateway.gatewayRoot().status).toBe(404);
+  expect(publicGateway.gatewayRoot().status).toBe(200);
 
   const workspace = await workspaces.createWorkspace("Gateway deletion");
   const created = await gateway.createGatewayKey(workspace.id, "Deletion key", "I".repeat(32));

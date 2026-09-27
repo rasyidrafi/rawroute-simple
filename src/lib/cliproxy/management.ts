@@ -13,7 +13,12 @@ export function setCliproxyManagementTransportForTesting(transport: CliproxyMana
 }
 
 export async function cliproxyManagement(path: string, init: RequestInit = {}): Promise<Response> {
-  if (!path.startsWith("/v0/management/") || path.includes("//") || path.includes("?")) {
+  // Callers pass only fixed management route names. Query values are always
+  // URL-encoded by their owning repository (for example, a mapped auth file),
+  // never copied from a public request.
+  let parsed: URL;
+  try { parsed = new URL(path, "http://cliproxy.invalid"); } catch { throw new Error("Invalid CLIProxy management path."); }
+  if (!parsed.pathname.startsWith("/v0/management/") || parsed.pathname.includes("//") || parsed.username || parsed.password) {
     throw new Error("Invalid CLIProxy management path.");
   }
   if (testTransport) return await testTransport(path, init);

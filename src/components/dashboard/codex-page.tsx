@@ -1,258 +1,45 @@
 "use client";
 
-import { useState } from "react";
-import { reportEvent } from "@/lib/logging/client";
-import { ArrowDownIcon, ArrowUpIcon, ExternalLinkIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { ArrowDownIcon, ArrowUpIcon, ExternalLinkIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { Confirm, notify, Page } from "@/components/dashboard/page-ui";
+import { ModelShareButton } from "@/components/dashboard/providers-page";
 import { DataTableHeader } from "@/components/dashboard/data-table-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
-import type { CodexAccount, CodexModel } from "@/mock/dashboard-data";
 
-export function CodexProviders({
-  models,
-  setModels,
-  accounts,
-  setAccounts,
-  workspaceId,
-}: {
-  models: CodexModel[];
-  setModels: React.Dispatch<React.SetStateAction<CodexModel[]>>;
-  accounts: CodexAccount[];
-  setAccounts: React.Dispatch<React.SetStateAction<CodexAccount[]>>;
-  workspaceId: string;
-}) {
-  const [connect, setConnect] = useState(false);
-  const [remove, setRemove] = useState<string | null>(null);
-  return (
-    <Page>
-      <Card>
-        <CardHeader>
-          <CardTitle>Codex Providers</CardTitle>
-          <CardDescription>
-            OAuth-backed Codex accounts use fill-first priority and report mock
-            quota windows.
-          </CardDescription>
-          <CardAction>
-            <Button onClick={() => setConnect(true)}>
-              <PlusIcon />
-              Add Codex account
-            </Button>
-          </CardAction>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <DataTableHeader columns={[
-              { id: "priority", label: "Priority" },
-              { id: "account", label: "Account" },
-              { id: "plan", label: "Plan" },
-              { id: "quota", label: "Quota" },
-              { id: "status", label: "Status" },
-              { id: "actions", label: "" },
-            ]} />
-            <TableBody>
-              {accounts.map((account, index) => (
-                <TableRow
-                  key={account.id}
-                  style={!account.enabled ? { opacity: 0.6 } : undefined}
-                >
-                  <TableCell>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        size="icon-xs"
-                        variant="ghost"
-                        aria-label={`Move ${account.name} up`}
-                        disabled={index === 0}
-                        onClick={() =>
-                          setAccounts((items) => {
-                            const next = [...items];
-                            [next[index - 1], next[index]] = [
-                              next[index],
-                              next[index - 1],
-                            ];
-                            return next;
-                          })
-                        }
-                      >
-                        <ArrowUpIcon />
-                      </Button>
-                      <Button
-                        size="icon-xs"
-                        variant="ghost"
-                        aria-label={`Move ${account.name} down`}
-                        disabled={index === accounts.length - 1}
-                        onClick={() =>
-                          setAccounts((items) => {
-                            const next = [...items];
-                            [next[index + 1], next[index]] = [
-                              next[index],
-                              next[index + 1],
-                            ];
-                            return next;
-                          })
-                        }
-                      >
-                        <ArrowDownIcon />
-                      </Button>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <span className="font-medium">{account.name}</span>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{account.plan}</Badge>
-                  </TableCell>
-                  <TableCell className="min-w-36">
-                    <div className="mb-1 flex justify-between text-xs">
-                      <span>Weekly</span>
-                      <span>{account.quota}% left</span>
-                    </div>
-                    <Progress value={account.quota} />
-                  </TableCell>
-                  <TableCell>
-                    <Switch
-                      checked={account.enabled}
-                      onCheckedChange={(enabled) =>
-                        setAccounts((items) =>
-                          items.map((item) =>
-                            item.id === account.id
-                              ? { ...item, enabled }
-                              : item,
-                          ),
-                        )
-                      }
-                      aria-label={`Enable ${account.name}`}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={account.quota > 0}
-                        onClick={() => {
-                          reportEvent("codex.credit", { workspaceId });
-                          notify("Codex reset credit redeemed");
-                        }}
-                      >
-                        Redeem
-                      </Button>
-                      <Button
-                        size="icon-sm"
-                        variant="ghost"
-                        aria-label={`Remove ${account.name}`}
-                        onClick={() => setRemove(account.id)}
-                      >
-                        <Trash2Icon />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>Built-in Codex models</CardTitle>
-          <CardDescription>
-            Toggle default model mappings used by connected accounts.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3">
-            {models.slice(0, 3).map((model) => (
-              <div
-                className="flex items-center justify-between rounded-lg border p-3"
-                key={model.id}
-              >
-                <span>
-                  <span className="block font-medium">{model.name}</span>
-                  <code className="text-xs text-muted-foreground">
-                    {model.id}
-                  </code>
-                </span>
-                <Switch
-                  checked={model.enabled}
-                  onCheckedChange={(checked) =>
-                    setModels((items) =>
-                      items.map((item) =>
-                        item.id === model.id
-                          ? { ...item, enabled: checked }
-                          : item,
-                      ),
-                    )
-                  }
-                  aria-label={`Enable ${model.name}`}
-                />
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-      <Dialog open={connect} onOpenChange={setConnect}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Connect Codex account</DialogTitle>
-            <DialogDescription>
-              No external OAuth session is opened. Complete this action to add a
-              demo account to the local mock list.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <Button
-              variant="outline"
-              onClick={() => { reportEvent("codex.authorize", { workspaceId }); notify("Mock device authorization started", "info"); }}
-            >
-              <ExternalLinkIcon />
-              Open Codex sign-in
-            </Button>
-            <Input
-              aria-label="Optional redirect URL reference"
-              placeholder="http://localhost:1455/auth/callback?code=..."
-            />
-          </div>
-          <DialogFooter>
-            <Button
-              onClick={() => {
-                setConnect(false);
-                setAccounts((items) => [
-                  ...items,
-                  {
-                    id: crypto.randomUUID(),
-                    name: "New Codex account",
-                    plan: "Plus",
-                    enabled: true,
-                    quota: 100,
-                  },
-                ]);
-                notify("Codex account connected");
-              }}
-            >
-              Add demo account
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      <Confirm
-        open={Boolean(remove)}
-        onOpenChange={(open) => !open && setRemove(null)}
-        title="Remove Codex account?"
-        description="This removes only local mock account data."
-        onConfirm={() => {
-          if (remove)
-            setAccounts((items) => items.filter((item) => item.id !== remove));
-          setRemove(null);
-          notify("Codex account removed");
-        }}
-      />
-    </Page>
-  );
+type Account = { id: string; name: string; email?: string; planType?: string; enabled: boolean; priority: number; status?: string; statusMessage?: string };
+type Model = { id: string; name: string; gatewayModelId: string; enabled: boolean; reasoningCapability?: { mode: string; supportedEfforts?: string[] } };
+type Quota = { fiveHour?: { usedPercent?: number; remainingPercent?: number; resetAt?: string }; weekly?: { used_percent?: number; percent_used?: number; remaining_percent?: number; usedPercent?: number; remainingPercent?: number; resetAt?: string }; stale?: boolean; reauthRequired?: boolean; error?: string; unusedResetCredits?: number };
+const headers = (workspaceId: string) => ({ "content-type": "application/json", "x-rawroute-workspace-id": workspaceId });
+
+export function CodexProviders({ workspaceId }: { workspaceId: string }) {
+  const [accounts, setAccounts] = useState<Account[]>([]); const [models, setModels] = useState<Model[]>([]); const [quotas, setQuotas] = useState<Record<string, Quota>>({}); const [cleanup, setCleanup] = useState<Array<{ accountId: string; updatedAt: number }>>([]);
+  const [error, setError] = useState<string>(); const [connecting, setConnecting] = useState(false); const [loginId, setLoginId] = useState<string>(); const [url, setUrl] = useState<string>(); const [callback, setCallback] = useState(""); const [remove, setRemove] = useState<string>(); const [reset, setReset] = useState<string>(); const [confirmation, setConfirmation] = useState(""); const [pending, setPending] = useState(false);
+  const load = useCallback(async () => { const response = await fetch("/api/codex", { headers: { "x-rawroute-workspace-id": workspaceId } }); const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.error || "Unable to load Codex accounts."); setAccounts(payload.accounts || []); setModels(payload.models || []); setCleanup(payload.cleanup || []); const entries = await Promise.all((payload.accounts || []).map(async (account: Account) => { const quota = await fetch(`/api/codex/${encodeURIComponent(account.id)}/quota`, { headers: { "x-rawroute-workspace-id": workspaceId } }).then((item) => item.json().catch(() => ({}))); return [account.id, quota] as const; })); setQuotas(Object.fromEntries(entries)); }, [workspaceId]);
+  useEffect(() => { void load().catch((caught: unknown) => setError(caught instanceof Error ? caught.message : "Unable to load Codex.")); }, [load]);
+  async function request(path: string, method: string, value?: unknown) { const response = await fetch(path, { method, headers: headers(workspaceId), ...(value === undefined ? {} : { body: JSON.stringify(value) }) }); const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.error || "Codex request failed."); return payload; }
+  async function start() { setPending(true); try { const result = await request("/api/codex/device/start", "POST"); setLoginId(result.loginId); setUrl(result.authorizationUrl); setConnecting(true); window.open(result.authorizationUrl, "_blank", "noopener,noreferrer"); } catch (caught) { notify(caught instanceof Error ? caught.message : "Unable to start sign-in.", "error"); } finally { setPending(false); } }
+  async function poll() { if (!loginId) return; setPending(true); try { const result = await request("/api/codex/device/poll", "POST", { loginId }); if (result.status === "pending") { notify("Authorization is still pending.", "info"); return; } setConnecting(false); setLoginId(undefined); setCallback(""); await load(); notify("Codex account connected."); } catch (caught) { notify(caught instanceof Error ? caught.message : "Unable to finish sign-in.", "error"); } finally { setPending(false); } }
+  async function submitCallback() { if (!loginId) return; setPending(true); try { await request("/api/codex/device/callback", "POST", { loginId, redirectUrl: callback }); await poll(); } catch (caught) { notify(caught instanceof Error ? caught.message : "Callback was rejected.", "error"); setPending(false); } }
+  async function cancel() { if (loginId) await request("/api/codex/device/cancel", "POST", { loginId }).catch(() => undefined); setConnecting(false); setLoginId(undefined); setUrl(undefined); setCallback(""); }
+  async function reorder(account: Account, direction: -1 | 1) { const index = accounts.findIndex((item) => item.id === account.id); const other = accounts[index + direction]; if (!other) return; const next = [...accounts]; next[index] = other; next[index + direction] = account; try { await request("/api/codex/reorder", "POST", { accountIds: next.map((item) => item.id) }); await load(); } catch (caught) { notify(caught instanceof Error ? caught.message : "Priority could not update.", "error"); } }
+   const remaining = (quota: Quota | undefined) => Math.max(0, Math.min(100, Number(quota?.weekly?.remainingPercent ?? quota?.weekly?.remaining_percent ?? 100 - Number(quota?.weekly?.usedPercent ?? quota?.weekly?.used_percent ?? quota?.weekly?.percent_used ?? 0))));
+   const quotaDetail = (window: Quota["fiveHour"] | Quota["weekly"]) => { const item = window as { usedPercent?: number; used_percent?: number; percent_used?: number; remainingPercent?: number; remaining_percent?: number; resetAt?: string } | undefined; const used = Math.max(0, Math.min(100, Number(item?.usedPercent ?? item?.used_percent ?? item?.percent_used ?? 100 - Number(item?.remainingPercent ?? item?.remaining_percent ?? 100)))); return { used, reset: item?.resetAt ? new Date(item.resetAt).toLocaleString() : "Reset time unavailable" }; };
+  return <Page>
+    {error ? <Card><CardContent className="py-4 text-sm text-destructive">{error}</CardContent></Card> : null}
+    <Card><CardHeader><CardTitle>Codex accounts</CardTitle><CardDescription>Accounts are workspace mappings to private CLIProxy auth files. OAuth tokens never leave CLIProxy.</CardDescription><CardAction><Button onClick={() => void start()} disabled={pending}><ExternalLinkIcon data-icon="inline-start" />Connect account</Button></CardAction></CardHeader><CardContent><Table><DataTableHeader columns={[{ id: "priority", label: "Priority" }, { id: "account", label: "Account" }, { id: "quota", label: "Weekly quota" }, { id: "status", label: "Status" }, { id: "actions", label: "" }]} /><TableBody>{accounts.map((account) => { const quota = quotas[account.id]; return <TableRow key={account.id}><TableCell><div className="flex items-center gap-1"><span>{accounts.indexOf(account) + 1}</span><Button size="icon-sm" variant="ghost" aria-label={`Move ${account.name} up`} disabled={accounts[0]?.id === account.id} onClick={() => void reorder(account, -1)}><ArrowUpIcon /></Button><Button size="icon-sm" variant="ghost" aria-label={`Move ${account.name} down`} disabled={accounts.at(-1)?.id === account.id} onClick={() => void reorder(account, 1)}><ArrowDownIcon /></Button></div></TableCell><TableCell><div className="flex flex-col gap-1"><span className="font-medium">{account.name}</span><span className="text-xs text-muted-foreground">{account.email || account.planType || "OAuth account"}</span></div></TableCell><TableCell className="min-w-52"><div className="flex flex-col gap-2 text-xs"><div><div className="mb-1 flex justify-between"><span>{quota?.reauthRequired ? "Reauthorize weekly" : "Weekly"}</span><span>{100 - quotaDetail(quota?.weekly).used}% remaining</span></div><Progress value={100 - quotaDetail(quota?.weekly).used} /><p className="mt-1 text-muted-foreground">{quotaDetail(quota?.weekly).reset}</p></div><div><div className="mb-1 flex justify-between"><span>Five-hour</span><span>{100 - quotaDetail(quota?.fiveHour).used}% remaining</span></div><Progress value={100 - quotaDetail(quota?.fiveHour).used} /><p className="mt-1 text-muted-foreground">{quotaDetail(quota?.fiveHour).reset}</p></div>{quota?.unusedResetCredits !== undefined ? <p className="text-muted-foreground">{quota.unusedResetCredits} reset credit{quota.unusedResetCredits === 1 ? "" : "s"} available</p> : null}{quota?.stale || quota?.error ? <p className="text-destructive">{quota.error || "Showing cached quota."}</p> : null}</div></TableCell><TableCell><div className="flex items-center gap-2"><Switch checked={account.enabled} aria-label={`Enable ${account.name}`} onCheckedChange={(enabled) => void request(`/api/codex/${account.id}`, "PATCH", { enabled }).then(load).catch((caught) => notify(caught.message, "error"))} /><Badge variant={account.status === "missing" || account.status === "unavailable" ? "destructive" : "outline"}>{account.status || "ready"}</Badge></div></TableCell><TableCell><div className="flex justify-end gap-1"><Button size="sm" variant="outline" disabled={remaining(quota) > 0 || !quota?.unusedResetCredits} onClick={() => setReset(account.id)}>Use reset</Button>{quota?.reauthRequired ? <Button size="sm" variant="outline" onClick={() => void start()}>Reauthorize</Button> : null}<Button size="icon-sm" variant="ghost" aria-label={`Remove ${account.name}`} onClick={() => setRemove(account.id)}><Trash2Icon /></Button></div></TableCell></TableRow>; })}</TableBody></Table></CardContent></Card>
+    {cleanup.length ? <Card><CardHeader><CardTitle>Credential cleanup pending</CardTitle><CardDescription>A deleted workspace mapping still has a protected private credential cleanup task. Retry is safe and never reveals the auth file.</CardDescription><CardAction><Button variant="outline" onClick={() => void request("/api/codex/cleanup/retry", "POST").then(load).catch((caught) => notify(caught.message, "error"))}>Retry cleanup</Button></CardAction></CardHeader><CardContent>{cleanup.map((item) => <p key={item.accountId} className="text-sm text-muted-foreground">Account cleanup pending since {new Date(item.updatedAt).toLocaleString()}.</p>)}</CardContent></Card> : null}
+    <Card><CardHeader><CardTitle>Built-in Codex models</CardTitle><CardDescription>Catalog entries are release-reviewed built-ins. Enable a model before sharing it; recipients receive only an alias, never an account mapping or credential.</CardDescription></CardHeader><CardContent><div className="flex flex-col gap-3">{models.map((model) => <div className="flex items-center justify-between rounded-lg border p-3" key={model.id}><div><p className="font-medium">{model.name}</p><code className="text-xs text-muted-foreground">{model.gatewayModelId}</code></div><div className="flex items-center gap-2"><ModelShareButton workspaceId={workspaceId} model={model} /><Switch checked={model.enabled} aria-label={`Enable ${model.name}`} onCheckedChange={(enabled) => void request(`/api/codex/models/${model.id}`, "PATCH", { enabled }).then(load).catch((caught) => notify(caught.message, "error"))} /></div></div>)}</div></CardContent></Card>
+    <Dialog open={connecting} onOpenChange={(open) => { if (!open) void cancel(); }}><DialogContent><DialogHeader><DialogTitle>Connect Codex account</DialogTitle><DialogDescription>Open the authorization page, then paste the complete localhost callback URL if your browser cannot reach the local callback listener.</DialogDescription></DialogHeader><FieldGroup><Field><FieldLabel htmlFor="codex-callback">Callback URL</FieldLabel><Input id="codex-callback" value={callback} onChange={(event) => setCallback(event.target.value)} placeholder="http://localhost:1455/auth/callback?code=…&state=…" /><FieldDescription>It must match this login’s state exactly.</FieldDescription></Field></FieldGroup><DialogFooter><Button variant="outline" onClick={() => url && window.open(url, "_blank", "noopener,noreferrer")}><ExternalLinkIcon data-icon="inline-start" />Open sign-in</Button><Button variant="outline" onClick={() => void poll()} disabled={pending}><RefreshCwIcon data-icon="inline-start" />Check status</Button><Button onClick={() => void submitCallback()} disabled={!callback || pending}>Submit callback</Button></DialogFooter></DialogContent></Dialog>
+    <Confirm open={Boolean(remove)} onOpenChange={(open) => !open && setRemove(undefined)} title="Remove Codex account?" description="This deletes the mapped private CLIProxy auth file and the workspace mapping." onConfirm={() => { if (remove) void request(`/api/codex/${remove}`, "DELETE").then(load).then(() => notify("Codex account removed.")).catch((caught) => notify(caught.message, "error")); setRemove(undefined); }} />
+    <Dialog open={Boolean(reset)} onOpenChange={(open) => !open && setReset(undefined)}><DialogContent><DialogHeader><DialogTitle>Use Codex reset credit</DialogTitle><DialogDescription>This is only available after the weekly quota is exhausted. Type the confirmation phrase to continue.</DialogDescription></DialogHeader><FieldGroup><Field><FieldLabel htmlFor="codex-reset">Confirmation</FieldLabel><Input id="codex-reset" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder="use my codex reset" /></Field></FieldGroup><DialogFooter><Button disabled={!reset || !confirmation} onClick={() => { if (reset) void request(`/api/codex/${reset}/reset`, "POST", { confirmation }).then(load).then(() => { setReset(undefined); setConfirmation(""); notify("Codex reset credit redeemed."); }).catch((caught) => notify(caught.message, "error")); }}>Redeem reset</Button></DialogFooter></DialogContent></Dialog>
+  </Page>;
 }

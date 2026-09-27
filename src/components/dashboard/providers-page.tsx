@@ -38,6 +38,7 @@ import {
 import { DataTableHeader } from "@/components/dashboard/data-table-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Card,
   CardAction,
@@ -100,6 +101,7 @@ const blankProvider = (): ProviderInput => ({
   authType: "bearer",
   headers: {},
   enabled: true,
+  supportPromptCacheKey: false,
 });
 const blankModel = (): ProviderModelInput => ({
   name: "",
@@ -300,8 +302,8 @@ export function Providers({
             <CardTitle>Codex Providers</CardTitle>
           </div>
           <CardDescription>
-            Codex remains a separate demo experience; it is not an ordinary
-            provider configuration.
+            Codex OAuth accounts are managed separately because their tokens
+            remain in the private CLIProxy auth-file store.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -310,7 +312,7 @@ export function Providers({
             nativeButton={false}
             render={<Link to={dashboardPaths.codex} />}
           >
-            Open Codex demo
+            Manage Codex accounts
             <ChevronRightIcon data-icon="inline-end" />
           </Button>
         </CardContent>
@@ -355,6 +357,8 @@ export function ProviderDetail({
     name: string;
     key: string;
     enabled: boolean;
+    rpmLimit?: number | null;
+    maxConcurrency?: number | null;
     id?: string;
   } | null>(null);
   const [remove, setRemove] = useState<{
@@ -463,6 +467,8 @@ export function ProviderDetail({
     const patch: ProviderCredentialPatch = {
       name: credentialDraft.name,
       enabled: credentialDraft.enabled,
+      rpmLimit: credentialDraft.rpmLimit,
+      maxConcurrency: credentialDraft.maxConcurrency,
       ...(credentialDraft.key ? { key: credentialDraft.key } : {}),
     };
     const saved = await mutateAndReload(
@@ -593,7 +599,7 @@ export function ProviderDetail({
             detail={detail}
             onAdd={() => {
               setFormError(null);
-              setCredentialDraft({ name: "", key: "", enabled: true });
+              setCredentialDraft({ name: "", key: "", enabled: true, rpmLimit: 60, maxConcurrency: 4 });
             }}
             onEdit={(credential) => {
               setFormError(null);
@@ -602,6 +608,8 @@ export function ProviderDetail({
                 name: credential.name,
                 key: "",
                 enabled: credential.enabled,
+                rpmLimit: credential.rpmLimit,
+                maxConcurrency: credential.maxConcurrency,
               });
             }}
             onDelete={(credential) =>
@@ -627,6 +635,7 @@ export function ProviderDetail({
             pending={actions.isPending}
           />
           <ModelsCard
+            workspaceId={current.workspaceId}
             models={detail?.models ?? []}
             onAdd={() => {
               setFormError(null);
@@ -641,6 +650,8 @@ export function ProviderDetail({
                   gatewaySuffix: model.gatewaySuffix,
                   upstreamModel: model.upstreamModel,
                   enabled: model.enabled,
+                  source: model.source,
+                  reasoningCapability: model.reasoningCapability,
                 },
               });
             }}
@@ -714,6 +725,7 @@ function toDraft(provider: ProviderDto): ProviderInput {
     authType: provider.authType,
     headers: provider.headers,
     enabled: provider.enabled,
+    supportPromptCacheKey: provider.supportPromptCacheKey,
   };
 }
 type ProviderDialogProps = {
@@ -887,6 +899,11 @@ function ProviderDialogForm({
             </SelectContent>
           </Select>
         </Field>
+        {draft.protocol !== "anthropic-messages" && <Field orientation="horizontal">
+          <Switch id="provider-prompt-cache-key" checked={draft.supportPromptCacheKey === true} onCheckedChange={(supportPromptCacheKey) => set("supportPromptCacheKey", supportPromptCacheKey)} />
+          <FieldLabel htmlFor="provider-prompt-cache-key">Support prompt cache key</FieldLabel>
+          <FieldDescription>Stored provider capability for later executor mapping.</FieldDescription>
+        </Field>}
         <Field>
           <FieldLabel htmlFor="provider-headers">
             Static JSON headers
@@ -1053,6 +1070,7 @@ function CredentialsCard({
   );
 }
 function ModelsCard({
+  workspaceId,
   models,
   onAdd,
   onEdit,
@@ -1060,6 +1078,7 @@ function ModelsCard({
   onToggle,
   pending,
 }: {
+  workspaceId: string;
   models: ProviderModelDto[];
   onAdd: () => void;
   onEdit: (model: ProviderModelDto) => void;
@@ -1116,12 +1135,13 @@ function ModelsCard({
                       onCheckedChange={(enabled) => onToggle(model, enabled)}
                     />
                   </TableCell>
-                  <TableCell>
-                    <div className="flex justify-end">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => onEdit(model)}
+                    <TableCell>
+                      <div className="flex justify-end">
+                        <ModelShareButton workspaceId={workspaceId} model={model} />
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => onEdit(model)}
                       >
                         Edit
                       </Button>
@@ -1144,6 +1164,14 @@ function ModelsCard({
       </CardContent>
     </Card>
   );
+}
+/** Shared by ordinary provider and built-in Codex model catalog rows. */
+export function ModelShareButton({ workspaceId, model }: { workspaceId: string; model: Pick<ProviderModelDto, "id" | "name" | "enabled"> }) {
+  const [open, setOpen] = useState(false); const [targets, setTargets] = useState<Array<{ id: string; name: string; shared: boolean; available: boolean; status: "active" | "unavailable" }>>([]); const [selected, setSelected] = useState<string[]>([]); const [phase, setPhase] = useState<"idle" | "loading" | "ready" | "error">("idle"); const [error, setError] = useState<string | null>(null); const [saving, setSaving] = useState(false); const [reload, setReload] = useState(0);
+  const load = useCallback(async () => { const response = await fetch(`/api/model-shares?modelId=${encodeURIComponent(model.id)}`, { headers: { "x-rawroute-workspace-id": workspaceId } }); const body: unknown = await response.json().catch(() => ({})); if (!response.ok) throw new Error(typeof (body as { error?: unknown }).error === "string" ? String((body as { error: string }).error) : "Unable to load sharing targets."); return (body as { targets: Array<{ id: string; name: string; shared: boolean; available: boolean; status: "active" | "unavailable" }> }).targets; }, [model.id, workspaceId]);
+  useEffect(() => { if (!open) return; let current = true; setPhase("loading"); setError(null); void load().then((next) => { if (!current) return; setTargets(next); setSelected(next.filter((item) => item.shared).map((item) => item.id)); setPhase("ready"); }, (reason: unknown) => { if (!current) return; setError(reason instanceof Error ? reason.message : "Unable to load sharing."); setPhase("error"); }); return () => { current = false; }; }, [open, load, reload]);
+  async function save() { if (phase !== "ready") return; setSaving(true); setError(null); try { const response = await fetch("/api/model-shares", { method: "PUT", headers: { "content-type": "application/json", "x-rawroute-workspace-id": workspaceId }, body: JSON.stringify({ modelId: model.id, recipientWorkspaceIds: selected }) }); const body: unknown = await response.json().catch(() => ({})); if (!response.ok) throw new Error(typeof (body as { error?: unknown }).error === "string" ? String((body as { error: string }).error) : "Unable to save sharing."); setOpen(false); notify("Model sharing saved"); } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to save sharing."); } finally { setSaving(false); } }
+  return <><Button size="sm" variant="ghost" onClick={() => setOpen(true)}>Share</Button><Dialog open={open} onOpenChange={(next) => !saving && setOpen(next)}><DialogContent><DialogHeader><DialogTitle>Share {model.name}</DialogTitle><DialogDescription>Grant active workspaces access through their own local alias. Existing grants stay selected when this source is temporarily unavailable.</DialogDescription></DialogHeader>{phase === "loading" ? <p className="text-sm text-muted-foreground" role="status">Loading sharing targets…</p> : phase === "error" ? <div className="flex items-center gap-2"><p className="text-sm text-destructive" role="alert">{error}</p><Button size="sm" variant="outline" onClick={() => setReload((value) => value + 1)}>Retry</Button></div> : <FieldGroup>{targets.map((target) => <Field key={target.id} orientation="horizontal"><Checkbox id={`share-${model.id}-${target.id}`} checked={selected.includes(target.id)} disabled={!target.available && !target.shared} onCheckedChange={(checked) => setSelected((current) => checked ? [...new Set([...current, target.id])] : current.filter((id) => id !== target.id))} /><FieldLabel htmlFor={`share-${model.id}-${target.id}`}>{target.name}{target.shared && !target.available ? <Badge className="ml-2" variant="outline">Unavailable</Badge> : null}</FieldLabel></Field>)}{!targets.length && <FieldDescription>No other active workspaces are available.</FieldDescription>}</FieldGroup>}{phase !== "error" && error && <p role="alert" className="text-sm text-destructive">{error}</p>}<DialogFooter><Button variant="outline" disabled={saving} onClick={() => setOpen(false)}>Cancel</Button><Button disabled={phase !== "ready" || saving} onClick={() => void save()}>{saving ? "Saving…" : "Save sharing"}</Button></DialogFooter></DialogContent></Dialog></>;
 }
 function ModelDialog({
   draft,
@@ -1209,6 +1237,25 @@ function ModelDialog({
                 onChange={(event) => set("upstreamModel", event.target.value)}
               />
             </Field>
+            <Field>
+              <FieldLabel>Model source</FieldLabel>
+              <Select value={draft.model.source ?? "custom"} onValueChange={(source) => source && set("source", source as "custom" | "builtin")}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent><SelectGroup><SelectItem value="custom">Custom</SelectItem><SelectItem value="builtin">Built-in</SelectItem></SelectGroup></SelectContent>
+              </Select>
+            </Field>
+            <Field>
+              <FieldLabel>Reasoning capability</FieldLabel>
+              <Select value={draft.model.reasoningCapability?.mode ?? "enabled"} onValueChange={(mode) => mode && set("reasoningCapability", mode === "disabled" ? { mode: "disabled" } : { mode: "enabled" })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent><SelectGroup><SelectItem value="enabled">Enabled</SelectItem><SelectItem value="disabled">Disabled</SelectItem></SelectGroup></SelectContent>
+              </Select>
+              <FieldDescription>Capability metadata is exposed to later combo policy validation.</FieldDescription>
+            </Field>
+            {draft.model.reasoningCapability?.mode !== "disabled" && <Field>
+              <FieldLabel htmlFor="model-reasoning-efforts">Supported reasoning efforts</FieldLabel>
+              <Input id="model-reasoning-efforts" value={draft.model.reasoningCapability?.supportedEfforts?.join(", ") ?? ""} placeholder="low, medium, high" onChange={(event) => set("reasoningCapability", { mode: "enabled", ...(event.target.value.trim() ? { supportedEfforts: [...new Set(event.target.value.split(",").map((effort) => effort.trim()).filter(Boolean))] } : {}) })} />
+            </Field>}
             <Field orientation="horizontal">
               <Switch
                 id="model-enabled"
@@ -1256,16 +1303,16 @@ function CredentialDialog({
   pending,
   onSubmit,
 }: {
-  draft: { name: string; key: string; enabled: boolean; id?: string } | null;
+  draft: { name: string; key: string; enabled: boolean; rpmLimit?: number | null; maxConcurrency?: number | null; id?: string } | null;
   setDraft: (
-    draft: { name: string; key: string; enabled: boolean; id?: string } | null,
+    draft: { name: string; key: string; enabled: boolean; rpmLimit?: number | null; maxConcurrency?: number | null; id?: string } | null,
   ) => void;
   error: string | null;
   pending: boolean;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   if (!draft) return null;
-  const set = (key: "name" | "key" | "enabled", value: string | boolean) =>
+  const set = (key: "name" | "key" | "enabled" | "rpmLimit" | "maxConcurrency", value: string | boolean | number | null) =>
     setDraft({ ...draft, [key]: value });
   return (
     <Dialog
@@ -1318,6 +1365,15 @@ function CredentialDialog({
               <FieldLabel htmlFor="credential-enabled">
                 Credential enabled
               </FieldLabel>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="credential-rpm">Requests per minute (advisory)</FieldLabel>
+              <Input id="credential-rpm" type="number" min={1} value={draft.rpmLimit ?? ""} onChange={(event) => set("rpmLimit", event.target.value ? Number(event.target.value) : null)} />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="credential-concurrency">Max concurrency (advisory)</FieldLabel>
+              <Input id="credential-concurrency" type="number" min={1} value={draft.maxConcurrency ?? ""} onChange={(event) => set("maxConcurrency", event.target.value ? Number(event.target.value) : null)} />
+              <FieldDescription>These limits are persisted only; request-time enforcement is not implemented.</FieldDescription>
             </Field>
           </FieldGroup>
           {error && (

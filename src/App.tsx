@@ -1,10 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { BrowserRouter } from "react-router";
+import { BrowserRouter, useLocation } from "react-router";
 import { LoginForm } from "@/components/login-form";
 import { DashboardShell } from "@/components/dashboard/dashboard-shell";
 import { WorkspaceProvider } from "@/components/workspace-provider";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Spinner } from "@/components/ui/spinner";
+import { PublicAnalyticsPage } from "@/components/public-analytics-page";
 import "./index.css";
 
 type AuthResponse = {
@@ -16,7 +17,14 @@ type AuthResponse = {
 type HelloResponse = { message: string };
 
 export function App() {
-  return <BrowserRouter><AuthenticatedApp /></BrowserRouter>;
+  return <BrowserRouter><RoutedApp /></BrowserRouter>;
+}
+
+function RoutedApp() {
+  const location = useLocation();
+  // The root is intentionally public even if an administrator happens to have
+  // a browser session. Every dashboard path remains behind the auth gate.
+  return location.pathname === "/" ? <PublicAnalyticsPage /> : <AuthenticatedApp />;
 }
 
 function AuthenticatedApp() {

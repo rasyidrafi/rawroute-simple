@@ -15,7 +15,11 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Spinner } from "@/components/ui/spinner";
 
-export async function copy(value: string, label = "Copied", scope: BrowserLogDetails = {}) {
+export async function copy(
+  value: string,
+  label = "Copied",
+  scope: BrowserLogDetails = {},
+) {
   try {
     if (!navigator.clipboard) throw new Error("Clipboard unavailable");
     await navigator.clipboard.writeText(value);
@@ -23,13 +27,19 @@ export async function copy(value: string, label = "Copied", scope: BrowserLogDet
     reportEvent("dashboard.copy", scope);
     return true;
   } catch {
-    toast.add({ title: "Clipboard access failed. Please try again.", type: "error" });
+    toast.add({
+      title: "Clipboard access failed. Please try again.",
+      type: "error",
+    });
     reportEvent("dashboard.copy-failed", scope);
     return false;
   }
 }
 
-export function notify(message: string, type: "success" | "info" | "error" = "success") {
+export function notify(
+  message: string,
+  type: "success" | "info" | "error" = "success",
+) {
   toast.add({ title: message, type });
 }
 
@@ -48,6 +58,7 @@ export function Confirm({
   description,
   onConfirm,
   pending = false,
+  disabled = false,
   error,
 }: {
   open: boolean;
@@ -56,19 +67,29 @@ export function Confirm({
   description: string;
   onConfirm: () => void;
   pending?: boolean;
+  disabled?: boolean;
   error?: string | null;
 }) {
   return (
-    <AlertDialog open={open} onOpenChange={(nextOpen) => !pending && onOpenChange(nextOpen)}>
+    <AlertDialog
+      open={open}
+      onOpenChange={(nextOpen) => !pending && onOpenChange(nextOpen)}
+    >
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{description}</AlertDialogDescription>
         </AlertDialogHeader>
-        {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        )}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
-          <AlertDialogAction disabled={pending} onClick={onConfirm}>{pending && <Spinner data-icon="inline-start" />}Confirm</AlertDialogAction>
+          <AlertDialogAction disabled={pending || disabled} onClick={onConfirm}>
+            {pending && <Spinner data-icon="inline-start" />}Confirm
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

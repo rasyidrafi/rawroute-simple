@@ -22,7 +22,7 @@ export function EndpointKeys({ workspaceId }: { workspaceId: string }) {
     renaming, deleteTarget, pendingKeyId, setListVersion, setOperationError,
     setCreateOpen, setCreateName, setCustomValue, setCreatedKey, setCopyingCreated,
     setRenameTarget, setRenameValue, setDeleteTarget, closeCreate, createKey,
-    copySecret, copyCreatedSecret, renameKey, deleteKey,
+    copyCreatedSecret, renameKey, deleteKey,
   } = useEndpointKeys(workspaceId);
   const endpoint = typeof window === "undefined" ? "/v1" : `${window.location.origin}/v1`;
 
@@ -57,13 +57,11 @@ export function EndpointKeys({ workspaceId }: { workspaceId: string }) {
             <div className="rounded-lg border border-dashed p-8 text-center"><p className="font-medium">No gateway API keys</p><p className="mt-1 text-sm text-muted-foreground">Create a key before sending requests through this workspace.</p></div>
           ) : (
             <>{keys.map((key) => {
-                const pending = pendingKeyId === key.id;
                 return <div key={key.id} className="flex items-center gap-3 rounded-lg border bg-muted/30 p-3">
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium">{key.name}</div>
                     <code className="block truncate text-xs text-muted-foreground">{maskedKeyValue}</code>
                   </div>
-                  <Button aria-label={`Copy ${key.name}`} size="icon-sm" variant="outline" disabled={pendingKeyId !== null} onClick={() => void copySecret(key)}>{pending ? <Spinner /> : <CopyIcon />}</Button>
                   <Button aria-label={`Edit ${key.name}`} size="icon-sm" variant="outline" disabled={pendingKeyId !== null} onClick={() => { setOperationError(null); setRenameTarget(key); setRenameValue(key.name); }}><PencilIcon /></Button>
                   <Button aria-label={`Delete ${key.name}`} size="icon-sm" variant="destructive" disabled={pendingKeyId !== null} onClick={() => { setOperationError(null); setDeleteTarget(key); }}><Trash2Icon /></Button>
                 </div>;
@@ -82,7 +80,7 @@ export function EndpointKeys({ workspaceId }: { workspaceId: string }) {
         <DialogFooter><Button type="button" variant="outline" disabled={creating} onClick={closeCreate}>Cancel</Button><Button type="submit" disabled={creating || !createName.trim()}>{creating && <Spinner data-icon="inline-start" />}Create key</Button></DialogFooter>
       </form></DialogContent></Dialog>
 
-      <Dialog open={Boolean(createdKey)} onOpenChange={(open) => { if (!open) { setCreatedKey(null); setCopyingCreated(false); } }}><DialogContent><DialogHeader><DialogTitle>API key created</DialogTitle><DialogDescription>Copy this value now. It will only be available from the admin dashboard.</DialogDescription></DialogHeader>{createdKey && <div className="flex items-center gap-2 py-5"><code className="min-w-0 flex-1 break-all rounded-md border bg-muted/30 p-3 text-xs">{createdKey.secret}</code><Button aria-label="Copy created API key" size="icon-sm" variant="outline" disabled={copyingCreated} onClick={() => void copyCreatedSecret()}>{copyingCreated ? <Spinner /> : <CopyIcon />}</Button></div>}<DialogFooter><Button disabled={copyingCreated} onClick={() => setCreatedKey(null)}>Done</Button></DialogFooter></DialogContent></Dialog>
+      <Dialog open={Boolean(createdKey)} onOpenChange={(open) => { if (!open) { setCreatedKey(null); setCopyingCreated(false); } }}><DialogContent><DialogHeader><DialogTitle>API key created</DialogTitle><DialogDescription>Copy this value now. It cannot be revealed again after this dialog closes.</DialogDescription></DialogHeader>{createdKey && <div className="flex items-center gap-2 py-5"><code className="min-w-0 flex-1 break-all rounded-md border bg-muted/30 p-3 text-xs">{createdKey.secret}</code><Button aria-label="Copy created API key" size="icon-sm" variant="outline" disabled={copyingCreated} onClick={() => void copyCreatedSecret()}>{copyingCreated ? <Spinner /> : <CopyIcon />}</Button></div>}<DialogFooter><Button disabled={copyingCreated} onClick={() => setCreatedKey(null)}>Done</Button></DialogFooter></DialogContent></Dialog>
 
       <Dialog open={Boolean(renameTarget)} onOpenChange={(open) => { if (!open && !renaming) { setRenameTarget(null); setRenameValue(""); setOperationError(null); } }}><DialogContent><form onSubmit={(event) => void renameKey(event)}>
         <DialogHeader><DialogTitle>Edit API key name</DialogTitle><DialogDescription>The key value cannot be changed.</DialogDescription></DialogHeader>

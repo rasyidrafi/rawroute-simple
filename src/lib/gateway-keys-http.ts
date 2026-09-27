@@ -3,10 +3,8 @@ import {
   createGatewayKey,
   deleteGatewayKey,
   GatewayKeyError,
-  getGatewayKey,
   isGatewayKeyId,
   listGatewayKeys,
-  revealGatewayKey,
   updateGatewayKey,
 } from "./gateway-keys";
 import { RequestScopeError, requireWorkspaceRequestScope, runWithWorkspaceScope } from "./request-scope";
@@ -147,18 +145,5 @@ export function deleteGatewayKeyHttp(request: BunRequest): Promise<Response> {
   return scoped(request, true, async (workspaceId) => await admitted(workspaceId, async () => {
     await deleteGatewayKey(workspaceId, keyIdFromRequest(request));
     return new Response(null, { status: 204, headers: { "Cache-Control": "no-store" } });
-  }));
-}
-
-export function revealGatewayKeyHttp(request: BunRequest): Promise<Response> {
-  return scoped(request, true, async (workspaceId) => await admitted(workspaceId, async () => {
-    const keyId = keyIdFromRequest(request, true);
-    // Explicit JSON keeps the sensitive action behind the same bounded-body and
-    // content-type policy as all other mutations. The only accepted body is {}.
-    const body = await readJsonBody(request, []);
-    if (Object.keys(body).length !== 0) throw new GatewayKeyError("Request body is invalid.", 400);
-    const key = await getGatewayKey(workspaceId, keyId);
-    if (!key) throw new GatewayKeyError("Gateway key not found.", 404);
-    return json({ key, secret: await revealGatewayKey(workspaceId, keyId) });
   }));
 }

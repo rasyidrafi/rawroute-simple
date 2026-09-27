@@ -10,6 +10,11 @@
     "start": "NODE_ENV=production bun src/index.ts",
     "build": "bun scripts/build.ts",
     "test:e2e": "bun scripts/e2e.ts",
+    "test:e2e:admin": "bun scripts/e2e.ts --admin",
+    "test:e2e:accounting": "bun scripts/e2e.ts --admin --accounting",
+    "test:e2e:financial": "bun scripts/e2e.ts --admin --accounting --financial",
+    "test:e2e:oauth-sharing": "bun scripts/e2e-oauth-sharing.ts",
+    "maintenance:usage-ledger": "bun scripts/maintenance.ts --workspace",
     "lint": "oxlint && CI=1 react-doctor --lint --scope full --yes --no-score --blocking error",
     "doctor": "react-doctor"
   },

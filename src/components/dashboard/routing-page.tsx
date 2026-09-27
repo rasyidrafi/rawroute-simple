@@ -1,399 +1,151 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
-import {
-  ArrowDownIcon,
-  ArrowLeftRightIcon,
-  ArrowUpIcon,
-  CopyIcon,
-  ListOrderedIcon,
-  PlusIcon,
-  Settings2Icon,
-  Share2Icon,
-  Trash2Icon,
-} from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { ArrowDownIcon, ArrowLeftRightIcon, ArrowUpIcon, CopyIcon, ListOrderedIcon, PlusIcon, Settings2Icon, Trash2Icon } from "lucide-react";
 import { Confirm, copy, notify, Page } from "@/components/dashboard/page-ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import type { Alias, Combo, Model } from "@/mock/dashboard-data";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
+import { memberPolicyConfigHash, normalizeComboCustomPayload, normalizeReasoning } from "@/lib/combo-reasoning";
+import { routingApi, type RoutingAliasDto, type RoutingComboDto, type RoutingDto, type RoutingMemberDto } from "@/lib/routing-client";
 
 type Editor = "alias" | "combo" | null;
+type MemberDraft = RoutingMemberDto & { uiId: string; customPayloadText: string };
+type ComboDraft = { combo: string; name: string; members: MemberDraft[] };
+const empty: RoutingDto = { aliases: [], combos: [], models: [], sharedModels: [] };
+const memberDraft = (member: RoutingMemberDto): MemberDraft => ({ ...member, uiId: member.id ?? crypto.randomUUID(), reasoning: member.reasoning ?? { mode: "inherit" }, customPayloadText: member.customPayload ? JSON.stringify(member.customPayload, null, 2) : "" });
 
-export function Routing({
-  aliases,
-  setAliases,
-  combos,
-  setCombos,
-  models,
-  workspaceId,
-}: {
-  aliases: Alias[];
-  setAliases: React.Dispatch<React.SetStateAction<Alias[]>>;
-  combos: Combo[];
-  setCombos: React.Dispatch<React.SetStateAction<Combo[]>>;
-  models: Model[];
-  workspaceId: string;
-}) {
+export function Routing({ workspaceId }: { workspaceId: string }) {
+  const [data, setData] = useState<RoutingDto>(empty);
+  const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
+  const [error, setError] = useState<string | null>(null);
   const [editor, setEditor] = useState<Editor>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [name, setName] = useState("");
-  const [target, setTarget] = useState(models[0]?.id ?? "");
-  const [remove, setRemove] = useState<{
-    type: "alias" | "combo";
-    id: string;
-    name: string;
-  } | null>(null);
-  function open(kind: "alias" | "combo", item?: Alias | Combo) {
-    setEditingId(item?.id ?? null);
-    setName(item?.name ?? "");
-    setTarget(
-      kind === "alias" && item
-        ? (item as Alias).target
-        : kind === "combo" && item
-          ? ((item as Combo).members[0] ?? "")
-          : (models[0]?.id ?? ""),
-    );
-    setEditor(kind);
-  }
-  function save(event: FormEvent) {
-    event.preventDefault();
-    if (!name.trim()) return;
-    if (editor === "alias") {
-      setAliases((items) =>
-        editingId
-          ? items.map((item) =>
-              item.id === editingId ? { ...item, name, target } : item,
-            )
-          : [
-              ...items,
-                { id: crypto.randomUUID(), name, target, shared: target.startsWith("shared/") },
-            ],
-      );
+  const [editing, setEditing] = useState<RoutingAliasDto | RoutingComboDto | null>(null);
+  const [alias, setAlias] = useState({ alias: "", targetModelId: "", shareId: null as string | null });
+  const [combo, setCombo] = useState<ComboDraft>({ combo: "", name: "", members: [] });
+  const [remove, setRemove] = useState<{ kind: "alias" | "combo"; id: string; name: string } | null>(null);
+  const [confirmPolicy, setConfirmPolicy] = useState(false);
+  const [pending, setPending] = useState(false);
+
+  const load = useCallback(async (signal?: AbortSignal) => {
+    setPhase("loading");
+    setError(null);
+    try {
+      const next = await routingApi(workspaceId).list(signal);
+      if (!signal?.aborted) { setData(next); setPhase("ready"); }
+    } catch (reason) {
+      if (!signal?.aborted) { setError(reason instanceof Error ? reason.message : "Unable to load routing."); setPhase("error"); }
     }
-    if (editor === "combo") {
-      setCombos((items) =>
-        editingId
-          ? items.map((item) =>
-              item.id === editingId
-                ? { ...item, name, members: [target, ...item.members.slice(1)] }
-                : item,
-            )
-          : [
-              ...items,
-              {
-                id: crypto.randomUUID(),
-                name,
-                members: [
-                  target,
-                  ...models
-                    .map((model) => model.id)
-                    .filter((modelId) => modelId !== target)
-                    .slice(0, 2),
-                ],
-              },
-            ],
-      );
-    }
-    setEditor(null);
-    notify(
-      editingId
-        ? editor === "alias"
-          ? "Alias updated"
-          : "Combo updated"
-        : editor === "alias"
-          ? "Alias created"
-          : "Combo created",
-    );
+  }, [workspaceId]);
+  useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => controller.abort(); }, [load]);
+
+  const directModels = data.models.map((model) => model.id);
+  const sharedModels = (data.sharedModels ?? []).filter((item) => item.status === "active");
+  const availableAliases = data.aliases.filter((item) => directModels.includes(item.targetModelId) || Boolean(item.shareId && sharedModels.some((share) => share.id === item.shareId))).map((item) => item.alias);
+  const comboTargets = [...directModels, ...availableAliases];
+  const freshMembers = () => directModels.slice(0, 2).map((target) => memberDraft({ target, reasoning: { mode: "inherit" } }));
+
+  function openAlias(value?: RoutingAliasDto) {
+    setEditing(value?.id ? value : null);
+    const firstShared = sharedModels[0];
+    setAlias(value ? { alias: value.alias, targetModelId: value.targetModelId, shareId: value.shareId ?? null } : { alias: "", targetModelId: directModels[0] ?? firstShared?.qualifiedModelId ?? "", shareId: directModels.length ? null : firstShared?.id ?? null });
+    setEditor("alias");
   }
-  function move(combo: Combo, index: number, direction: -1 | 1) {
-    setCombos((items) =>
-      items.map((item) => {
-        if (item.id !== combo.id) return item;
-        const next = [...item.members];
-        [next[index], next[index + direction]] = [
-          next[index + direction],
-          next[index],
-        ];
-        return { ...item, members: next };
-      }),
-    );
+  function openCombo(value?: RoutingComboDto) {
+    setEditing(value ?? null);
+    setCombo(value ? { combo: value.combo, name: value.name, members: value.members.map(memberDraft) } : { combo: "", name: "", members: freshMembers() });
+    setEditor("combo");
   }
-  function confirmRemove() {
-    if (remove?.type === "alias")
-      setAliases((items) => items.filter((item) => item.id !== remove.id));
-    if (remove?.type === "combo")
-      setCombos((items) => items.filter((item) => item.id !== remove.id));
-    setRemove(null);
-    notify("Route deleted");
+  function serializedMembers(): { members: RoutingMemberDto[]; changedPolicy: boolean } {
+    let changedPolicy = false;
+    const members = combo.members.map((member) => {
+      let customPayload: Record<string, unknown> | undefined;
+      if (member.customPayloadText.trim()) {
+        const parsed: unknown = JSON.parse(member.customPayloadText);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(`Member ${member.position === undefined ? "" : member.position + 1} custom payload must be a JSON object.`);
+        customPayload = normalizeComboCustomPayload(parsed);
+      }
+      const reasoning = normalizeReasoning(member.reasoning);
+      const hash = memberPolicyConfigHash({ target: member.target, reasoning, customPayload });
+      if ((reasoning.mode !== "inherit" || customPayload) && hash !== member.policyHash) changedPolicy = true;
+      return { target: member.target, reasoning, ...(customPayload ? { customPayload } : {}), policyHash: hash };
+    });
+    return { members, changedPolicy };
   }
-  return (
-    <Page>
-      <Card>
-        <CardHeader>
-          <CardTitle><span className="flex items-center gap-2"><ArrowLeftRightIcon className="size-5" />Aliases</span></CardTitle>
-          <CardDescription>
-            Create local gateway IDs that forward to enabled local or shared models.
-          </CardDescription>
-          <CardAction>
-            <Button onClick={() => open("alias")}>
-              <PlusIcon />
-              Add alias
-            </Button>
-          </CardAction>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Gateway ID</TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead>Target model</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {aliases.map((alias) => (
-                <TableRow key={alias.id}>
-                  <TableCell>
-                    <code className="text-xs font-medium">{alias.name}</code>
-                  </TableCell>
-                  <TableCell>{alias.name}</TableCell>
-                  <TableCell>
-                    <code className="text-xs">{alias.target}</code>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={alias.shared ? "secondary" : "outline"}>
-                      {alias.shared ? "Shared" : "Local"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      aria-label={`Copy ${alias.name}`}
-                      onClick={() => copy(alias.name, "Copied", { page: "routing", workspaceId })}
-                    >
-                      <CopyIcon />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => open("alias", alias)}
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      aria-label={`Delete ${alias.name}`}
-                      onClick={() =>
-                        setRemove({
-                          type: "alias",
-                          id: alias.id,
-                          name: alias.name,
-                        })
-                      }
-                    >
-                      <Trash2Icon />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle><span className="flex items-center gap-2"><ListOrderedIcon className="size-5" />Combos</span></CardTitle>
-          <CardDescription>
-            Try models in order until one accepts the request.
-          </CardDescription>
-          <CardAction>
-            <Button onClick={() => open("combo")}>
-              <PlusIcon />
-              Add combo
-            </Button>
-          </CardAction>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Gateway ID</TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead>Fallback order</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {combos.map((combo) => (
-                <TableRow key={combo.id}>
-                  <TableCell><code className="text-xs font-medium">{combo.name}</code></TableCell>
-                  <TableCell>{combo.name}</TableCell>
-                  <TableCell>
-                    <ol className="space-y-1">
-                      {combo.members.map((member, index) => (
-                        <li key={`${combo.id}-${member}`} className="flex min-w-0 items-center gap-1 text-xs">
-                          <span className="w-5 shrink-0 text-muted-foreground">{index + 1}.</span>
-                          <code className="min-w-0 flex-1 truncate">{member}</code>
-                          <Button size="icon-xs" variant="ghost" aria-label={`Move ${member} up`} disabled={index === 0} onClick={() => move(combo, index, -1)}><ArrowUpIcon /></Button>
-                          <Button size="icon-xs" variant="ghost" aria-label={`Move ${member} down`} disabled={index === combo.members.length - 1} onClick={() => move(combo, index, 1)}><ArrowDownIcon /></Button>
-                        </li>
-                      ))}
-                    </ol>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex justify-end gap-1">
-                      <Button size="icon-sm" variant="outline" aria-label={`Copy ${combo.name}`} onClick={() => copy(combo.name, "Copied", { page: "routing", workspaceId })}><CopyIcon /></Button>
-                      <Button size="icon-sm" variant="outline" aria-label={`Edit ${combo.name}`} onClick={() => open("combo", combo)}><Settings2Icon /></Button>
-                      <Button size="icon-sm" variant="destructive" aria-label={`Delete ${combo.name}`} onClick={() => setRemove({ type: "combo", id: combo.id, name: combo.name })}><Trash2Icon /></Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle><span className="flex items-center gap-2"><Share2Icon className="size-5" />Shared Models</span></CardTitle>
-          <CardDescription>
-            Read-only models shared into this workspace. Create a local alias before gateway keys can use one.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader><TableRow><TableHead>Qualified model</TableHead><TableHead>Source workspace</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader>
-            <TableBody>
-              <TableRow><TableCell><code className="text-xs">shared/acme/claude-sonnet</code></TableCell><TableCell>Acme Production</TableCell><TableCell><Badge variant="secondary">Available</Badge></TableCell><TableCell className="text-right"><Button size="sm" variant="outline" onClick={() => { setName("claude-sonnet"); setTarget("shared/acme/claude-sonnet"); setEditingId(null); setEditor("alias"); notify("Create an alias to expose this shared model", "info") }}><PlusIcon />Create alias</Button></TableCell></TableRow>
-              <TableRow><TableCell><code className="text-xs">shared/research/gpt-5</code></TableCell><TableCell>Research</TableCell><TableCell><Badge variant="secondary">Available</Badge></TableCell><TableCell className="text-right"><Button size="sm" variant="outline" onClick={() => { setName("gpt-5"); setTarget("shared/research/gpt-5"); setEditingId(null); setEditor("alias"); notify("Create an alias to expose this shared model", "info") }}><PlusIcon />Create alias</Button></TableCell></TableRow>
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-      <RoutingDialogs
-        editor={editor}
-        setEditor={setEditor}
-        editingId={editingId}
-        name={name}
-        setName={setName}
-        target={target}
-        setTarget={setTarget}
-        models={models}
-        remove={remove}
-        setRemove={setRemove}
-        onSave={save}
-        onConfirmRemove={confirmRemove}
-      />
-    </Page>
-  );
+  async function saveCombo(acknowledged: boolean) {
+    const { members, changedPolicy } = serializedMembers();
+    if (changedPolicy && !acknowledged) { setConfirmPolicy(true); return; }
+    setPending(true);
+    try {
+      const api = routingApi(workspaceId);
+      const confirmed = await Promise.all(members.map(async (member) => {
+        const changed = (member.reasoning?.mode !== "inherit" || member.customPayload) && member.policyHash !== combo.members.find((item) => item.target === member.target)?.policyHash;
+        if (!changed) return member;
+        const tested = await api.testDraftMember(member);
+        if (tested.probe.status === "invalid") throw new Error(tested.probe.message);
+        return { ...member, confirmation: tested.confirmation };
+      }));
+      if (editing) await api.updateCombo(editing.id, { combo: combo.combo, name: combo.name, members: confirmed });
+      else await api.createCombo(combo.combo, combo.name, confirmed);
+      setEditor(null); setConfirmPolicy(false); await load(); notify(editing ? "Combo updated" : "Combo created");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to save combo."); }
+    finally { setPending(false); }
+  }
+  async function save() {
+    setError(null);
+    if (editor === "combo") { try { await saveCombo(false); } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to save combo."); } return; }
+    setPending(true);
+    try {
+      const api = routingApi(workspaceId);
+      if (editing) await api.updateAlias(editing.id, alias); else await api.createAlias(alias.alias, alias.targetModelId, alias.shareId ?? undefined);
+      setEditor(null); await load(); notify(editing ? "Alias updated" : "Alias created");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to save alias."); }
+    finally { setPending(false); }
+  }
+  async function confirmDelete() {
+    if (!remove) return; setPending(true);
+    try { const api = routingApi(workspaceId); if (remove.kind === "alias") await api.deleteAlias(remove.id); else await api.deleteCombo(remove.id); setRemove(null); await load(); notify("Route deleted"); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to delete route."); }
+    finally { setPending(false); }
+  }
+  async function testMember(comboId: string, memberId: string) {
+    setPending(true); setError(null);
+    try { const result = await routingApi(workspaceId).testComboMember(comboId, memberId); await load(); notify(`Policy ${result.probe.status}: ${result.probe.message}`); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to test this member policy."); }
+    finally { setPending(false); }
+  }
+  function move(index: number, direction: -1 | 1) { setCombo((current) => { const members = [...current.members]; [members[index], members[index + direction]] = [members[index + direction]!, members[index]!]; return { ...current, members }; }); }
+
+  return <Page>
+    {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
+    <Card><CardHeader><CardTitle><span className="flex items-center gap-2"><ArrowLeftRightIcon />Aliases</span></CardTitle><CardDescription>Stable local IDs for enabled local or owner-approved shared models.</CardDescription><CardAction><Button onClick={() => openAlias()} disabled={phase === "loading" || (!directModels.length && !sharedModels.length)}><PlusIcon />Add alias</Button></CardAction></CardHeader><CardContent><RouteTable phase={phase} empty="No aliases yet." headers={["Gateway ID", "Target model"]}>{data.aliases.map((item) => <TableRow key={item.id}><TableCell><code>{item.alias}</code></TableCell><TableCell><code>{item.targetModelId}</code></TableCell><Actions name={item.alias} onCopy={() => copy(item.alias, "Copied", { page: "routing", workspaceId })} onEdit={() => openAlias(item)} onDelete={() => setRemove({ kind: "alias", id: item.id, name: item.alias })} /></TableRow>)}</RouteTable></CardContent></Card>
+    <Card><CardHeader><CardTitle><span className="flex items-center gap-2"><ListOrderedIcon />Combos</span></CardTitle><CardDescription>Try 2–8 unique enabled models or aliases in saved order.</CardDescription><CardAction><Button onClick={() => openCombo()} disabled={phase === "loading" || comboTargets.length < 2}><PlusIcon />Add combo</Button></CardAction></CardHeader><CardContent><RouteTable phase={phase} empty="No combos yet." headers={["Gateway ID", "Fallback order"]}>{data.combos.map((item) => <TableRow key={item.id}><TableCell><code>{item.combo}</code><p className="text-xs text-muted-foreground">{item.name}</p></TableCell><TableCell><ol className="flex flex-col gap-1">{item.members.map((member, index) => <li key={member.id ?? `${item.id}:${index}`}><code>{(member.position ?? index) + 1}. {member.target}</code>{member.validationState === "unverified" && <Badge className="ml-2" variant="outline">Policy unverified</Badge>}{member.validationState === "verified" && <Badge className="ml-2" variant="secondary">Policy verified</Badge>}{member.validationState === "invalid" && <Badge className="ml-2" variant="destructive">Policy invalid</Badge>}{member.id && (member.reasoning?.mode !== "inherit" || member.customPayload) && <Button className="ml-2" size="xs" variant="outline" disabled={pending} onClick={() => void testMember(item.id, member.id!)}>Test</Button>}</li>)}</ol></TableCell><Actions name={item.combo} onCopy={() => copy(item.combo, "Copied", { page: "routing", workspaceId })} onEdit={() => openCombo(item)} onDelete={() => setRemove({ kind: "combo", id: item.id, name: item.combo })} /></TableRow>)}</RouteTable></CardContent></Card>
+    <Card><CardHeader><CardTitle><span className="flex items-center gap-2">Shared models</span></CardTitle><CardDescription>Owner-approved models can only be used through a local alias.</CardDescription></CardHeader><CardContent>{sharedModels.length ? <div className="flex flex-col gap-2">{sharedModels.map((share) => <div className="flex items-center justify-between gap-3" key={share.id}><span><code>{share.qualifiedModelId}</code><span className="ml-2 text-sm text-muted-foreground">{share.ownerWorkspaceName}</span></span><Button size="sm" variant="outline" onClick={() => openAlias({ id: "", workspaceId, alias: "", targetModelId: share.qualifiedModelId, shareId: share.id, createdAt: Date.now(), updatedAt: Date.now() })}>Create alias</Button></div>)}</div> : <p className="text-sm text-muted-foreground">No active model grants.</p>}</CardContent></Card>
+    <RouteEditor editor={editor} editing={editing} alias={alias} setAlias={setAlias} combo={combo} setCombo={setCombo} directModels={directModels} sharedModels={sharedModels} aliases={availableAliases} pending={pending} error={error} onMove={move} onClose={() => setEditor(null)} onSave={save} />
+    <Confirm open={Boolean(remove)} onOpenChange={(open) => !open && setRemove(null)} title={`Delete ${remove?.name}?`} description="This local route will no longer resolve." onConfirm={() => void confirmDelete()} pending={pending} error={error} />
+    <Confirm open={confirmPolicy} onOpenChange={setConfirmPolicy} title="Save unverified policy?" description="RawRoute will store this changed policy as unverified. Upstream validation is not available until the execution slice." onConfirm={() => void saveCombo(true)} pending={pending} error={error} />
+  </Page>;
 }
 
-function RoutingDialogs({
-  editor,
-  setEditor,
-  editingId,
-  name,
-  setName,
-  target,
-  setTarget,
-  models,
-  remove,
-  setRemove,
-  onSave,
-  onConfirmRemove,
-}: {
-  editor: Editor;
-  setEditor: (editor: Editor) => void;
-  editingId: string | null;
-  name: string;
-  setName: (name: string) => void;
-  target: string;
-  setTarget: (target: string) => void;
-  models: Model[];
-  remove: { type: "alias" | "combo"; id: string; name: string } | null;
-  setRemove: (remove: { type: "alias" | "combo"; id: string; name: string } | null) => void;
-  onSave: (event: FormEvent) => void;
-  onConfirmRemove: () => void;
-}) {
-  return (
-    <>
-      <Dialog
-        open={editor === "alias" || editor === "combo"}
-        onOpenChange={(openState) => !openState && setEditor(null)}
-      >
-        <DialogContent>
-          <form onSubmit={onSave}>
-            <DialogHeader>
-              <DialogTitle>{editingId ? "Edit" : "Create"} {editor}</DialogTitle>
-              <DialogDescription>
-                {editor === "combo"
-                  ? "The first selected model becomes the primary, followed by a visible fallback chain."
-                  : "Choose a local model target."}
-              </DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-4 py-4">
-              <label className="text-sm font-medium" htmlFor="route-name">
-                Gateway ID
-                <Input id="route-name" className="mt-2" value={name} onChange={(event) => setName(event.target.value)} />
-              </label>
-              <Select value={target} onValueChange={(value) => value !== null && setTarget(value)}>
-                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {models.map((model) => <SelectItem value={model.id} key={model.id}>{model.id}</SelectItem>)}
-                  <SelectItem value="shared/acme/claude-sonnet">shared/acme/claude-sonnet</SelectItem>
-                  <SelectItem value="shared/research/gpt-5">shared/research/gpt-5</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <DialogFooter>
-              <Button type="submit" disabled={!name.trim()}>{editingId ? "Save" : "Create"} {editor}</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-      <Confirm
-        open={Boolean(remove)}
-        onOpenChange={(openState) => !openState && setRemove(null)}
-        title={`Delete ${remove?.name}?`}
-        description="This local model route will stop accepting requests."
-        onConfirm={onConfirmRemove}
-      />
-    </>
-  );
+function RouteTable({ phase, empty, headers, children }: { phase: string; empty: string; headers: string[]; children: React.ReactNode }) {
+  const hasRows = Array.isArray(children) ? children.length > 0 : Boolean(children);
+  return <Table><TableHeader><TableRow>{headers.map((header) => <TableHead key={header}>{header}</TableHead>)}<TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>{phase === "loading" ? <TableRow><TableCell colSpan={headers.length + 1}>Loading routing…</TableCell></TableRow> : hasRows ? children : <TableRow><TableCell colSpan={headers.length + 1}>{empty}</TableCell></TableRow>}</TableBody></Table>;
+}
+function Actions({ name, onCopy, onEdit, onDelete }: { name: string; onCopy: () => void; onEdit: () => void; onDelete: () => void }) {
+  return <TableCell className="text-right"><Button size="icon-sm" variant="ghost" aria-label={`Copy ${name}`} onClick={onCopy}><CopyIcon /></Button><Button size="icon-sm" variant="ghost" aria-label={`Edit ${name}`} onClick={onEdit}><Settings2Icon /></Button><Button size="icon-sm" variant="ghost" aria-label={`Delete ${name}`} onClick={onDelete}><Trash2Icon /></Button></TableCell>;
+}
+function RouteEditor({ editor, editing, alias, setAlias, combo, setCombo, directModels, sharedModels, aliases, pending, error, onMove, onClose, onSave }: { editor: Editor; editing: RoutingAliasDto | RoutingComboDto | null; alias: { alias: string; targetModelId: string; shareId: string | null }; setAlias: React.Dispatch<React.SetStateAction<{ alias: string; targetModelId: string; shareId: string | null }>>; combo: ComboDraft; setCombo: React.Dispatch<React.SetStateAction<ComboDraft>>; directModels: string[]; sharedModels: NonNullable<RoutingDto["sharedModels"]>; aliases: string[]; pending: boolean; error: string | null; onMove: (index: number, direction: -1 | 1) => void; onClose: () => void; onSave: () => void }) {
+  const targets = [...directModels, ...aliases];
+  const update = (index: number, change: Partial<MemberDraft>) => setCombo((current) => ({ ...current, members: current.members.map((member, memberIndex) => memberIndex === index ? { ...member, ...change } : member) }));
+  const add = () => { const target = targets.find((value) => !combo.members.some((member) => member.target === value)); if (target) setCombo((current) => ({ ...current, members: [...current.members, memberDraft({ target, reasoning: { mode: "inherit" } })] })); };
+  return <Dialog open={editor !== null} onOpenChange={() => undefined}><DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto"><div><DialogHeader><DialogTitle>{editing ? "Edit" : "Create"} {editor}</DialogTitle><DialogDescription>{editor === "combo" ? "Configure ordered members and their persisted reasoning/custom-payload policy." : "Aliases target an enabled local model or an owner-approved shared grant."}</DialogDescription></DialogHeader><FieldGroup className="py-4">{editor === "alias" ? <><Field><FieldLabel htmlFor="alias-id">Gateway ID</FieldLabel><Input id="alias-id" value={alias.alias} onChange={(event) => setAlias((value) => ({ ...value, alias: event.target.value }))} /></Field><Field><FieldLabel>Target model</FieldLabel><Select value={alias.targetModelId} onValueChange={(value) => { const shared = sharedModels.find((item) => item.qualifiedModelId === value); if (value) setAlias((current) => ({ ...current, targetModelId: value, shareId: shared?.id ?? null })); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{directModels.map((target) => <SelectItem value={target} key={target}>{target}</SelectItem>)}</SelectGroup>{sharedModels.length > 0 && <SelectGroup>{sharedModels.map((target) => <SelectItem value={target.qualifiedModelId} key={target.id}>{target.qualifiedModelId} · {target.ownerWorkspaceName}</SelectItem>)}</SelectGroup>}</SelectContent></Select></Field></> : <ComboFields combo={combo} directModels={directModels} aliases={aliases} update={update} add={add} onMove={onMove} setCombo={setCombo} />}</FieldGroup>{error && <p className="text-sm text-destructive" role="alert">{error}</p>}<DialogFooter><Button type="button" variant="outline" onClick={onClose} disabled={pending}>Cancel</Button><Button type="button" onClick={onSave} disabled={pending || (editor === "alias" ? !alias.alias || !alias.targetModelId : !combo.combo || !combo.name || combo.members.length < 2)}>{pending ? "Saving…" : editing ? "Save" : "Create"}</Button></DialogFooter></div></DialogContent></Dialog>;
+}
+function ComboFields({ combo, directModels, aliases, update, add, onMove, setCombo }: { combo: ComboDraft; directModels: string[]; aliases: string[]; update: (index: number, change: Partial<MemberDraft>) => void; add: () => void; onMove: (index: number, direction: -1 | 1) => void; setCombo: React.Dispatch<React.SetStateAction<ComboDraft>> }) {
+  return <><Field><FieldLabel htmlFor="combo-id">Gateway ID</FieldLabel><Input id="combo-id" value={combo.combo} onChange={(event) => setCombo((value) => ({ ...value, combo: event.target.value }))} /></Field><Field><FieldLabel htmlFor="combo-name">Name</FieldLabel><Input id="combo-name" value={combo.name} onChange={(event) => setCombo((value) => ({ ...value, name: event.target.value }))} /></Field>{combo.members.map((member, index) => <Field key={member.uiId}><FieldLabel>Member {index + 1}</FieldLabel><div className="flex gap-2"><Select value={member.target} onValueChange={(target) => target && update(index, { target })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{directModels.map((target) => <SelectItem value={target} key={target} disabled={combo.members.some((item, itemIndex) => itemIndex !== index && item.target === target)}>{target}</SelectItem>)}</SelectGroup>{aliases.length > 0 && <SelectGroup><SelectItem value="__aliases_header" disabled>Aliases</SelectItem>{aliases.map((target) => <SelectItem value={target} key={target} disabled={combo.members.some((item, itemIndex) => itemIndex !== index && item.target === target)}>{target}</SelectItem>)}</SelectGroup>}</SelectContent></Select><Button type="button" size="icon-sm" variant="ghost" aria-label={`Move member ${index + 1} up`} disabled={index === 0} onClick={() => onMove(index, -1)}><ArrowUpIcon /></Button><Button type="button" size="icon-sm" variant="ghost" aria-label={`Move member ${index + 1} down`} disabled={index === combo.members.length - 1} onClick={() => onMove(index, 1)}><ArrowDownIcon /></Button></div><Field><FieldLabel>Reasoning</FieldLabel><Select value={member.reasoning?.mode ?? "inherit"} onValueChange={(mode) => mode && update(index, { reasoning: mode === "override" ? { mode: "override", effort: member.reasoning?.effort ?? "medium" } : { mode: mode as "inherit" | "default" } })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="inherit">Inherit request</SelectItem><SelectItem value="default">Provider default</SelectItem><SelectItem value="override">Override</SelectItem></SelectGroup></SelectContent></Select></Field>{member.reasoning?.mode === "override" && <Field><FieldLabel htmlFor={`effort-${member.uiId}`}>Reasoning effort</FieldLabel><Input id={`effort-${member.uiId}`} value={member.reasoning.effort ?? ""} onChange={(event) => update(index, { reasoning: { mode: "override", effort: event.target.value } })} /></Field>}<Field><FieldLabel htmlFor={`payload-${member.uiId}`}>Custom JSON payload</FieldLabel><Textarea id={`payload-${member.uiId}`} value={member.customPayloadText} onChange={(event) => update(index, { customPayloadText: event.target.value })} placeholder='{"extra_body":{"temperature":0.2}}' /><FieldDescription>Protected request fields are rejected. Changed policies require confirmation and remain unverified.</FieldDescription></Field></Field>)}<div className="flex gap-2"><Button type="button" variant="outline" disabled={combo.members.length >= 8 || combo.members.length >= directModels.length + aliases.length} onClick={add}>Add member</Button><Button type="button" variant="ghost" disabled={combo.members.length <= 2} onClick={() => setCombo((current) => ({ ...current, members: current.members.slice(0, -1) }))}>Remove last</Button></div></>;
 }

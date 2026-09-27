@@ -35,7 +35,7 @@ type Projection = {
   revision: number;
   namespace: string;
   namePrefix: string;
-  state: "applied" | "native-execution-pending";
+  state: "applied";
   openai: RemoteEntry[];
   claude: RemoteEntry[];
 };
@@ -287,6 +287,9 @@ function projection(snapshot: ProviderProjectionSnapshot): Projection {
     prefix: namespace,
     "base-url": provider.baseUrl,
     models: enabledModels,
+    // Keep the explicit false: omission has a different meaning in CLIProxy
+    // defaults, and makes a browser toggle a real projection diff.
+    "support-prompt-cache-key": provider.supportPromptCacheKey,
     ...(headers ? { headers } : {}),
   };
   if (provider.protocol === "openai-responses")
@@ -296,7 +299,9 @@ function projection(snapshot: ProviderProjectionSnapshot): Projection {
       revision: provider.desiredRevision,
       namespace,
       namePrefix,
-      state: "native-execution-pending",
+      // Direct Responses execution never depends on CLIProxy projection. It is
+      // still revision-tracked so the browser can truthfully report readiness.
+      state: "applied",
       openai: [],
       claude: [],
     };
@@ -678,6 +683,24 @@ async function activeRevision(
   });
   return result.rows[0] ? Number(result.rows[0].desired_revision) : undefined;
 }
+/** Remove stale projected configuration before native execution. If CLIProxy is
+ * offline, keep an explicit durable retry record without blocking native use. */
+async function cleanupNativeProjection(workspaceId: string, providerId: string): Promise<void> {
+  const namespace = providerManagedNamespace(workspaceId, providerId);
+  const namePrefix = providerManagedNamePrefix(workspaceId, providerId);
+  try {
+    await withCliproxyManagementLock(async () => {
+      const current = await readRemote(); const fingerprints = await ownership(workspaceId, providerId);
+      const openai = current.openai.filter((entry) => !isManagedOpenai(entry, namespace, namePrefix));
+      const claude = current.claude.filter((entry) => !isOwnedClaude(entry, namespace, fingerprints));
+      if (stableOpenai(current.openai) !== stableOpenai(openai)) await put("/v0/management/openai-compatibility", openai);
+      if (stableClaude(current.claude) !== stableClaude(claude)) await put("/v0/management/claude-api-key", claude);
+    });
+    await withDatabaseWrite(async () => { await db.batch([{ sql: "DELETE FROM provider_projection_ownership WHERE workspace_id = ? AND provider_id = ?", args: [workspaceId, providerId] }, { sql: "DELETE FROM provider_native_cleanup_pending WHERE workspace_id = ? AND provider_id = ?", args: [workspaceId, providerId] }]); });
+  } catch {
+    await withDatabaseWrite(async () => { await db.execute({ sql: "INSERT INTO provider_native_cleanup_pending(workspace_id, provider_id, namespace, name_prefix, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(workspace_id, provider_id) DO UPDATE SET updated_at = excluded.updated_at", args: [workspaceId, providerId, namespace, namePrefix, Date.now()] }); });
+  }
+}
 function unavailableStatus(
   workspaceId: string,
   providerId: string,
@@ -738,6 +761,19 @@ async function reconcileOne(
     const attemptedRevision = snapshot.provider.desiredRevision;
     try {
       const desired = projection(snapshot);
+      if (snapshot.provider.protocol === "openai-responses") {
+        await cleanupNativeProjection(workspaceId, providerId);
+        const current = await withDatabaseWrite(async () => await db.execute({
+          sql: "UPDATE providers SET applied_revision = ? WHERE workspace_id = ? AND id = ? AND status = 'active' AND desired_revision = ?",
+          args: [desired.revision, workspaceId, providerId, desired.revision],
+        }));
+        if (current.rowsAffected === 1) await saveState(workspaceId, providerId, desired.revision, "applied", null);
+        return {
+          status: (await getProviderSyncStatus(workspaceId, providerId)) ?? await unavailableStatus(workspaceId, providerId),
+          attemptedRevision,
+          terminal: false,
+        };
+      }
       const previousOwnership = await ownership(workspaceId, providerId);
       const intendedOwnership = new Set(desired.claude.map(claudeFingerprint));
       const fingerprints = await applyWithBoundedRetry(
@@ -752,21 +788,12 @@ async function reconcileOne(
           "CLIProxy did not retain the managed Anthropic configuration.",
         );
       await saveOwnership(workspaceId, providerId, fingerprints);
-      const current =
-        desired.state === "native-execution-pending"
-          ? { rowsAffected: 1 }
-          : await withDatabaseWrite(
-              async () =>
-                await db.execute({
-                  sql: "UPDATE providers SET applied_revision = ? WHERE workspace_id = ? AND id = ? AND status = 'active' AND desired_revision = ?",
-                  args: [
-                    desired.revision,
-                    workspaceId,
-                    providerId,
-                    desired.revision,
-                  ],
-                }),
-            );
+      const current = await withDatabaseWrite(
+        async () => await db.execute({
+          sql: "UPDATE providers SET applied_revision = ? WHERE workspace_id = ? AND id = ? AND status = 'active' AND desired_revision = ?",
+          args: [desired.revision, workspaceId, providerId, desired.revision],
+        }),
+      );
       if (current.rowsAffected === 1)
         await saveState(
           workspaceId,

@@ -5,7 +5,26 @@ import * as path from "node:path";
 import { normalizeVersion } from "./release";
 
 export const CLIPROXY_HOST = "127.0.0.1";
-export const CLIPROXY_PORT = 8317;
+const DEFAULT_CLIPROXY_PORT = 8317;
+
+/**
+ * Test fixtures may select an isolated loopback port before this module is
+ * imported. Production deliberately has no environment override: CLIProxy is
+ * always private on its documented port.
+ */
+function testCliproxyPort(): number | undefined {
+  if (process.env.NODE_ENV !== "test") return undefined;
+  const rawPort = process.env.RAWROUTE_CLIPROXY_TEST_PORT;
+  if (rawPort === undefined) return undefined;
+  if (!/^\d+$/.test(rawPort)) throw new Error("RAWROUTE_CLIPROXY_TEST_PORT must be a valid TCP port");
+  const port = Number(rawPort);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error("RAWROUTE_CLIPROXY_TEST_PORT must be a valid TCP port");
+  }
+  return port;
+}
+
+export const CLIPROXY_PORT = testCliproxyPort() ?? DEFAULT_CLIPROXY_PORT;
 
 export interface PersistentState {
   schemaVersion: 1;

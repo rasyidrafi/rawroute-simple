@@ -4,6 +4,8 @@ import { homedir } from "node:os";
 import * as path from "node:path";
 import type { Transaction } from "@libsql/client";
 import { db } from "./db";
+import { assertProviderModelPublicIdAvailable, ensureRoutingSchema, renameRoutingModelTarget, renameRoutingModelTargets } from "./routing";
+import { renameSharedAliasTargetsForSourceModel } from "./model-shares";
 
 const PROVIDER_SCHEMA_VERSION = 1;
 const MASKED_SECRET = "__unchanged__";
@@ -25,6 +27,7 @@ export type Provider = {
   protocol: ProviderProtocol;
   authType: ProviderAuthType;
   headers: Record<string, string>;
+  supportPromptCacheKey: boolean;
   enabled: boolean;
   createdAt: number;
   updatedAt: number;
@@ -44,6 +47,9 @@ export type ProviderCredential = {
   key: typeof MASKED_SECRET;
   enabled: boolean;
   priority: number;
+  /** Stored advisory values; execution enforcement is intentionally deferred. */
+  rpmLimit?: number;
+  maxConcurrency?: number;
   createdAt: number;
   updatedAt: number;
 };
@@ -57,6 +63,8 @@ export type ProviderModel = {
   gatewayModelId: string;
   upstreamModel: string;
   enabled: boolean;
+  source: "custom" | "builtin";
+  reasoningCapability?: { mode: "enabled" | "disabled"; supportedEfforts?: string[] };
   createdAt: number;
   updatedAt: number;
 };
@@ -77,6 +85,7 @@ export type ProviderInput = {
   authType?: unknown;
   headers?: unknown;
   enabled?: unknown;
+  supportPromptCacheKey?: unknown;
 };
 
 export class ProviderError extends Error {
@@ -88,12 +97,12 @@ export class ProviderError extends Error {
 
 type ProviderRow = {
   id: string; workspace_id: string; name: string; prefix: string; base_url: string;
-  protocol: ProviderProtocol; auth_type: ProviderAuthType; headers_json: string; enabled: number;
+  protocol: ProviderProtocol; auth_type: ProviderAuthType; headers_json: string; enabled: number; support_prompt_cache_key?: number;
   created_at: number; updated_at: number; desired_revision: number; applied_revision: number | null;
   api_key_count?: number; enabled_api_key_count?: number; model_count?: number; enabled_model_count?: number;
 };
-type CredentialRow = { id: string; workspace_id: string; provider_id: string; name: string; enabled: number; priority: number; created_at: number; updated_at: number; encrypted_secret?: string };
-type ModelRow = { id: string; workspace_id: string; provider_id: string; name: string; gateway_suffix: string; gateway_model_id: string; upstream_model: string; enabled: number; created_at: number; updated_at: number };
+type CredentialRow = { id: string; workspace_id: string; provider_id: string; name: string; enabled: number; priority: number; rpm_limit?: number | null; max_concurrency?: number | null; created_at: number; updated_at: number; encrypted_secret?: string };
+type ModelRow = { id: string; workspace_id: string; provider_id: string; name: string; gateway_suffix: string; gateway_model_id: string; upstream_model: string; enabled: number; source?: string; reasoning_json?: string; created_at: number; updated_at: number };
 
 let masterKey: Buffer | undefined;
 const providerWriteLocks = new Map<string, Promise<void>>();
@@ -242,22 +251,43 @@ function validateEnabled(input: unknown): boolean {
   if (typeof input !== "boolean") throw new ProviderError("Enabled must be a boolean.", 400);
   return input;
 }
+function validatePromptCacheKey(input: unknown, protocol: ProviderProtocol): boolean {
+  if (input === undefined) return false;
+  if (typeof input !== "boolean") throw new ProviderError("Prompt cache key support must be a boolean.", 400);
+  if (input && protocol === "anthropic-messages") throw new ProviderError("Prompt cache key support is only available for OpenAI-compatible providers.", 400);
+  return input;
+}
+function validateOptionalPositive(input: unknown, label: string): number | undefined {
+  if (input === undefined || input === null) return undefined;
+  if (typeof input !== "number" || !Number.isSafeInteger(input) || input <= 0) throw new ProviderError(`${label} must be a positive integer.`, 400);
+  return input;
+}
+function validateReasoningCapability(input: unknown): ProviderModel["reasoningCapability"] {
+  if (input === undefined || input === null) return undefined;
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new ProviderError("Model reasoning capability is invalid.", 400);
+  const value = input as { mode?: unknown; supportedEfforts?: unknown };
+  if (value.mode !== "enabled" && value.mode !== "disabled") throw new ProviderError("Model reasoning capability is invalid.", 400);
+  if (value.supportedEfforts !== undefined && (!Array.isArray(value.supportedEfforts) || value.supportedEfforts.length > 16 || value.supportedEfforts.some((effort) => typeof effort !== "string" || !effort.trim() || effort.trim().length > 64))) throw new ProviderError("Model reasoning capability is invalid.", 400);
+  if (value.mode === "disabled" && value.supportedEfforts !== undefined) throw new ProviderError("Disabled reasoning cannot declare supported efforts.", 400);
+  return value.mode === "enabled" ? { mode: "enabled", ...(value.supportedEfforts?.length ? { supportedEfforts: [...new Set(value.supportedEfforts.map((effort) => effort.trim().toLowerCase()))] } : {}) } : { mode: "disabled" };
+}
 function isUnique(error: unknown): boolean { return error instanceof Error && /unique constraint|constraint failed/i.test(error.message); }
 function notFound(kind = "Provider"): ProviderError { return new ProviderError(`${kind} not found.`, 404); }
 export function isProviderId(value: unknown): value is string { return typeof value === "string" && PROVIDER_ID.test(value); }
 
 function providerFromRow(row: ProviderRow): Provider {
-  return { id: String(row.id), workspaceId: String(row.workspace_id), name: String(row.name), prefix: String(row.prefix), baseUrl: String(row.base_url), protocol: row.protocol, authType: row.auth_type, headers: parseHeaders(String(row.headers_json)), enabled: Number(row.enabled) === 1, createdAt: Number(row.created_at), updatedAt: Number(row.updated_at), desiredRevision: Number(row.desired_revision), appliedRevision: row.applied_revision === null || row.applied_revision === undefined ? null : Number(row.applied_revision), apiKeyCount: Number(row.api_key_count ?? 0), enabledApiKeyCount: Number(row.enabled_api_key_count ?? 0), modelCount: Number(row.model_count ?? 0), enabledModelCount: Number(row.enabled_model_count ?? 0) };
+  return { id: String(row.id), workspaceId: String(row.workspace_id), name: String(row.name), prefix: String(row.prefix), baseUrl: String(row.base_url), protocol: row.protocol, authType: row.auth_type, headers: parseHeaders(String(row.headers_json)), supportPromptCacheKey: Number(row.support_prompt_cache_key ?? 0) === 1, enabled: Number(row.enabled) === 1, createdAt: Number(row.created_at), updatedAt: Number(row.updated_at), desiredRevision: Number(row.desired_revision), appliedRevision: row.applied_revision === null || row.applied_revision === undefined ? null : Number(row.applied_revision), apiKeyCount: Number(row.api_key_count ?? 0), enabledApiKeyCount: Number(row.enabled_api_key_count ?? 0), modelCount: Number(row.model_count ?? 0), enabledModelCount: Number(row.enabled_model_count ?? 0) };
 }
 function credentialFromRow(row: CredentialRow): ProviderCredential {
-  return { id: String(row.id), workspaceId: String(row.workspace_id), providerId: String(row.provider_id), name: String(row.name), key: MASKED_SECRET, enabled: Number(row.enabled) === 1, priority: Number(row.priority), createdAt: Number(row.created_at), updatedAt: Number(row.updated_at) };
+  return { id: String(row.id), workspaceId: String(row.workspace_id), providerId: String(row.provider_id), name: String(row.name), key: MASKED_SECRET, enabled: Number(row.enabled) === 1, priority: Number(row.priority), ...(row.rpm_limit === null || row.rpm_limit === undefined ? {} : { rpmLimit: Number(row.rpm_limit) }), ...(row.max_concurrency === null || row.max_concurrency === undefined ? {} : { maxConcurrency: Number(row.max_concurrency) }), createdAt: Number(row.created_at), updatedAt: Number(row.updated_at) };
 }
 function modelFromRow(row: ModelRow): ProviderModel {
-  return { id: String(row.id), workspaceId: String(row.workspace_id), providerId: String(row.provider_id), name: String(row.name), gatewaySuffix: String(row.gateway_suffix), gatewayModelId: String(row.gateway_model_id), upstreamModel: String(row.upstream_model), enabled: Number(row.enabled) === 1, createdAt: Number(row.created_at), updatedAt: Number(row.updated_at) };
+  let reasoningCapability: ProviderModel["reasoningCapability"]; try { reasoningCapability = validateReasoningCapability(row.reasoning_json ? JSON.parse(row.reasoning_json) : undefined); } catch { throw new Error("Provider model reasoning metadata stored in the database is invalid."); }
+  return { id: String(row.id), workspaceId: String(row.workspace_id), providerId: String(row.provider_id), name: String(row.name), gatewaySuffix: String(row.gateway_suffix), gatewayModelId: String(row.gateway_model_id), upstreamModel: String(row.upstream_model), enabled: Number(row.enabled) === 1, source: row.source === "builtin" ? "builtin" : "custom", ...(reasoningCapability ? { reasoningCapability } : {}), createdAt: Number(row.created_at), updatedAt: Number(row.updated_at) };
 }
 
 const providerSelect = `
-  SELECT p.id, p.workspace_id, p.name, p.prefix, p.base_url, p.protocol, p.auth_type, p.headers_json, p.enabled,
+  SELECT p.id, p.workspace_id, p.name, p.prefix, p.base_url, p.protocol, p.auth_type, p.headers_json, p.enabled, p.support_prompt_cache_key,
     p.created_at, p.updated_at, p.desired_revision, p.applied_revision,
     (SELECT COUNT(*) FROM provider_credentials c WHERE c.workspace_id = p.workspace_id AND c.provider_id = p.id AND c.status = 'active') AS api_key_count,
     (SELECT COUNT(*) FROM provider_credentials c WHERE c.workspace_id = p.workspace_id AND c.provider_id = p.id AND c.status = 'active' AND c.enabled = 1) AS enabled_api_key_count,
@@ -355,7 +385,7 @@ export async function ensureProviderSchema(): Promise<void> {
     { sql: `CREATE TABLE IF NOT EXISTS providers (
       id TEXT PRIMARY KEY NOT NULL, workspace_id TEXT NOT NULL, name TEXT NOT NULL, prefix TEXT NOT NULL, normalized_prefix TEXT NOT NULL,
       base_url TEXT NOT NULL, protocol TEXT NOT NULL CHECK (protocol IN ('openai-chat', 'openai-responses', 'anthropic-messages')),
-      auth_type TEXT NOT NULL CHECK (auth_type IN ('bearer', 'x-api-key', 'none')), headers_json TEXT NOT NULL, enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+       auth_type TEXT NOT NULL CHECK (auth_type IN ('bearer', 'x-api-key', 'none')), headers_json TEXT NOT NULL, support_prompt_cache_key INTEGER NOT NULL DEFAULT 0 CHECK (support_prompt_cache_key IN (0, 1)), enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
       status TEXT NOT NULL CHECK (status IN ('active', 'deleted')), desired_revision INTEGER NOT NULL, applied_revision INTEGER,
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER,
       FOREIGN KEY(workspace_id) REFERENCES workspaces(id),
@@ -364,7 +394,7 @@ export async function ensureProviderSchema(): Promise<void> {
     { sql: "CREATE UNIQUE INDEX IF NOT EXISTS providers_workspace_prefix_active_idx ON providers(workspace_id, normalized_prefix) WHERE status = 'active'" },
     { sql: `CREATE TABLE IF NOT EXISTS provider_credentials (
       id TEXT PRIMARY KEY NOT NULL, workspace_id TEXT NOT NULL, provider_id TEXT NOT NULL, name TEXT NOT NULL, normalized_name TEXT NOT NULL,
-      encrypted_secret TEXT NOT NULL, enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)), priority INTEGER NOT NULL, status TEXT NOT NULL CHECK (status IN ('active', 'deleted')),
+       encrypted_secret TEXT NOT NULL, enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)), priority INTEGER NOT NULL, rpm_limit INTEGER, max_concurrency INTEGER, status TEXT NOT NULL CHECK (status IN ('active', 'deleted')),
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER,
       UNIQUE(workspace_id, id), FOREIGN KEY(workspace_id, provider_id) REFERENCES providers(workspace_id, id)
     )` },
@@ -372,7 +402,7 @@ export async function ensureProviderSchema(): Promise<void> {
     { sql: "CREATE INDEX IF NOT EXISTS provider_credentials_order_idx ON provider_credentials(workspace_id, provider_id, status, priority, id)" },
     { sql: `CREATE TABLE IF NOT EXISTS provider_models (
       id TEXT PRIMARY KEY NOT NULL, workspace_id TEXT NOT NULL, provider_id TEXT NOT NULL, name TEXT NOT NULL, gateway_suffix TEXT NOT NULL,
-      gateway_model_id TEXT NOT NULL, upstream_model TEXT NOT NULL, enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)), status TEXT NOT NULL CHECK (status IN ('active', 'deleted')),
+       gateway_model_id TEXT NOT NULL, upstream_model TEXT NOT NULL, enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)), source TEXT NOT NULL DEFAULT 'custom' CHECK (source IN ('custom', 'builtin')), reasoning_json TEXT, status TEXT NOT NULL CHECK (status IN ('active', 'deleted')),
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER,
       UNIQUE(workspace_id, id), FOREIGN KEY(workspace_id, provider_id) REFERENCES providers(workspace_id, id)
     )` },
@@ -392,12 +422,26 @@ export async function ensureProviderSchema(): Promise<void> {
       workspace_id TEXT NOT NULL, provider_id TEXT NOT NULL, claude_fingerprints_json TEXT NOT NULL,
       updated_at INTEGER NOT NULL, PRIMARY KEY (workspace_id, provider_id)
     )` },
+    { sql: `CREATE TABLE IF NOT EXISTS provider_native_cleanup_pending (
+      workspace_id TEXT NOT NULL, provider_id TEXT NOT NULL, namespace TEXT NOT NULL, name_prefix TEXT NOT NULL,
+      updated_at INTEGER NOT NULL, PRIMARY KEY (workspace_id, provider_id)
+    )` },
     { sql: "INSERT INTO provider_schema_meta (id, version) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET version = MAX(version, excluded.version)", args: [PROVIDER_SCHEMA_VERSION] },
   ], "write");
   const tombstoneColumns = await db.execute("PRAGMA table_info(provider_projection_tombstones)");
   if (!tombstoneColumns.rows.some((row) => String(row.name) === "claude_fingerprints_json")) {
     await db.execute("ALTER TABLE provider_projection_tombstones ADD COLUMN claude_fingerprints_json TEXT NOT NULL DEFAULT '[]'");
   }
+  const providerColumns = await db.execute("PRAGMA table_info(providers)");
+  if (!providerColumns.rows.some((row) => String(row.name) === "support_prompt_cache_key")) await db.execute("ALTER TABLE providers ADD COLUMN support_prompt_cache_key INTEGER NOT NULL DEFAULT 0 CHECK (support_prompt_cache_key IN (0, 1))");
+  const credentialColumns = await db.execute("PRAGMA table_info(provider_credentials)");
+  if (!credentialColumns.rows.some((row) => String(row.name) === "rpm_limit")) await db.execute("ALTER TABLE provider_credentials ADD COLUMN rpm_limit INTEGER");
+  if (!credentialColumns.rows.some((row) => String(row.name) === "max_concurrency")) await db.execute("ALTER TABLE provider_credentials ADD COLUMN max_concurrency INTEGER");
+  const modelColumns = await db.execute("PRAGMA table_info(provider_models)");
+  if (!modelColumns.rows.some((row) => String(row.name) === "source")) await db.execute("ALTER TABLE provider_models ADD COLUMN source TEXT NOT NULL DEFAULT 'custom'");
+  if (!modelColumns.rows.some((row) => String(row.name) === "reasoning_json")) await db.execute("ALTER TABLE provider_models ADD COLUMN reasoning_json TEXT");
+  // Provider model writes share a public-ID namespace with aliases and combos.
+  await ensureRoutingSchema();
   await ensureProviderCredentialMaster();
 }
 
@@ -407,15 +451,15 @@ export async function listProviders(workspaceId: string): Promise<Provider[]> {
 }
 /** Scoped aggregate used by admin model selectors; it never includes deleted rows. */
 export async function listProviderModels(workspaceId: string): Promise<ProviderModel[]> {
-  const result = await db.execute({ sql: "SELECT id, workspace_id, provider_id, name, gateway_suffix, gateway_model_id, upstream_model, enabled, created_at, updated_at FROM provider_models WHERE workspace_id = ? AND status = 'active' ORDER BY gateway_model_id COLLATE NOCASE, id", args: [workspaceId] });
+  const result = await db.execute({ sql: "SELECT id, workspace_id, provider_id, name, gateway_suffix, gateway_model_id, upstream_model, enabled, source, reasoning_json, created_at, updated_at FROM provider_models WHERE workspace_id = ? AND status = 'active' ORDER BY gateway_model_id COLLATE NOCASE, id", args: [workspaceId] });
   return result.rows.map((row) => modelFromRow(row as unknown as ModelRow));
 }
 export async function getProviderDetail(workspaceId: string, providerId: string): Promise<ProviderDetail | undefined> {
   const row = await activeProvider(workspaceId, providerId);
   if (!row) return undefined;
   const [credentials, models] = await Promise.all([
-    db.execute({ sql: "SELECT id, workspace_id, provider_id, name, enabled, priority, created_at, updated_at FROM provider_credentials WHERE workspace_id = ? AND provider_id = ? AND status = 'active' ORDER BY priority, id", args: [workspaceId, providerId] }),
-    db.execute({ sql: "SELECT id, workspace_id, provider_id, name, gateway_suffix, gateway_model_id, upstream_model, enabled, created_at, updated_at FROM provider_models WHERE workspace_id = ? AND provider_id = ? AND status = 'active' ORDER BY gateway_suffix COLLATE NOCASE, id", args: [workspaceId, providerId] }),
+    db.execute({ sql: "SELECT id, workspace_id, provider_id, name, enabled, priority, rpm_limit, max_concurrency, created_at, updated_at FROM provider_credentials WHERE workspace_id = ? AND provider_id = ? AND status = 'active' ORDER BY priority, id", args: [workspaceId, providerId] }),
+    db.execute({ sql: "SELECT id, workspace_id, provider_id, name, gateway_suffix, gateway_model_id, upstream_model, enabled, source, reasoning_json, created_at, updated_at FROM provider_models WHERE workspace_id = ? AND provider_id = ? AND status = 'active' ORDER BY gateway_suffix COLLATE NOCASE, id", args: [workspaceId, providerId] }),
   ]);
   return { ...providerFromRow(row), credentials: credentials.rows.map((item) => credentialFromRow(item as unknown as CredentialRow)), models: models.rows.map((item) => modelFromRow(item as unknown as ModelRow)) };
 }
@@ -425,7 +469,7 @@ export async function getProviderProjectionSnapshot(workspaceId: string, provide
   if (!row) return undefined;
   const [credentials, models] = await Promise.all([
     db.execute({ sql: "SELECT id, workspace_id, provider_id, enabled, priority, encrypted_secret FROM provider_credentials WHERE workspace_id = ? AND provider_id = ? AND status = 'active' ORDER BY priority, id", args: [workspaceId, providerId] }),
-    db.execute({ sql: "SELECT id, workspace_id, provider_id, name, gateway_suffix, gateway_model_id, upstream_model, enabled, created_at, updated_at FROM provider_models WHERE workspace_id = ? AND provider_id = ? AND status = 'active' ORDER BY gateway_suffix COLLATE NOCASE, id", args: [workspaceId, providerId] }),
+    db.execute({ sql: "SELECT id, workspace_id, provider_id, name, gateway_suffix, gateway_model_id, upstream_model, enabled, source, reasoning_json, created_at, updated_at FROM provider_models WHERE workspace_id = ? AND provider_id = ? AND status = 'active' ORDER BY gateway_suffix COLLATE NOCASE, id", args: [workspaceId, providerId] }),
   ]);
   return {
     provider: providerFromRow(row),
@@ -441,11 +485,11 @@ export async function createProvider(workspaceId: string, input: ProviderInput):
   const protocol = validateProtocol(input.protocol);
   const prefix = normalizePrefix(input.prefix);
   const baseUrl = validateUrl(input.baseUrl, protocol);
-  const authType = validateAuth(input.authType, protocol, baseUrl);
+  const authType = validateAuth(input.authType, protocol, baseUrl); const supportPromptCacheKey = validatePromptCacheKey(input.supportPromptCacheKey, protocol);
   const id = randomUUID(); const now = Date.now();
   try {
-    await db.execute({ sql: `INSERT INTO providers (id, workspace_id, name, prefix, normalized_prefix, base_url, protocol, auth_type, headers_json, enabled, status, desired_revision, applied_revision, created_at, updated_at, deleted_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 1, NULL, ?, ?, NULL)`, args: [id, workspaceId, fieldText(input.name, "Provider name", 80), prefix, prefix, baseUrl, protocol, authType, JSON.stringify(validateHeaders(input.headers)), validateEnabled(input.enabled) ? 1 : 0, now, now] });
+    await db.execute({ sql: `INSERT INTO providers (id, workspace_id, name, prefix, normalized_prefix, base_url, protocol, auth_type, headers_json, support_prompt_cache_key, enabled, status, desired_revision, applied_revision, created_at, updated_at, deleted_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 1, NULL, ?, ?, NULL)`, args: [id, workspaceId, fieldText(input.name, "Provider name", 80), prefix, prefix, baseUrl, protocol, authType, JSON.stringify(validateHeaders(input.headers)), supportPromptCacheKey ? 1 : 0, validateEnabled(input.enabled) ? 1 : 0, now, now] });
   } catch (error) { if (isUnique(error)) throw new ProviderError("Provider prefix is already in use in this workspace.", 409); throw error; }
   const detail = await getProviderDetail(workspaceId, id); if (!detail) throw notFound(); return detail;
 }
@@ -455,18 +499,23 @@ export async function updateProvider(workspaceId: string, providerId: string, in
   try {
     await inProviderWriteTransaction(workspaceId, providerId, async (transaction) => {
       const row = await activeProviderInTransaction(transaction, workspaceId, providerId); if (!row) throw notFound();
-      const current = providerFromRow(row);
+       const current = providerFromRow(row);
+       if (current.prefix === "codex") throw new ProviderError("The built-in Codex provider is managed by Codex account administration.", 409);
       const protocol = input.protocol === undefined ? current.protocol : validateProtocol(input.protocol);
       const prefix = input.prefix === undefined ? current.prefix : normalizePrefix(input.prefix);
       const baseUrl = validateUrl(input.baseUrl === undefined ? current.baseUrl : input.baseUrl, protocol);
       const authType = validateAuth(input.authType === undefined ? current.authType : input.authType, protocol, baseUrl);
       const name = input.name === undefined ? current.name : fieldText(input.name, "Provider name", 80);
       const headers = input.headers === undefined ? current.headers : validateHeaders(input.headers);
-      const enabled = input.enabled === undefined ? current.enabled : validateEnabled(input.enabled);
+       const enabled = input.enabled === undefined ? current.enabled : validateEnabled(input.enabled); const supportPromptCacheKey = input.supportPromptCacheKey === undefined ? current.supportPromptCacheKey : validatePromptCacheKey(input.supportPromptCacheKey, protocol);
       const now = Date.now();
-      await transaction.execute({ sql: `UPDATE providers SET name = ?, prefix = ?, normalized_prefix = ?, base_url = ?, protocol = ?, auth_type = ?, headers_json = ?, enabled = ?, desired_revision = desired_revision + 1, applied_revision = NULL, updated_at = ? WHERE workspace_id = ? AND id = ? AND status = 'active'`, args: [name, prefix, prefix, baseUrl, protocol, authType, JSON.stringify(headers), enabled ? 1 : 0, now, workspaceId, providerId] });
-      if (prefix !== current.prefix) {
-        await transaction.execute({ sql: "UPDATE provider_models SET gateway_model_id = ? || '/' || gateway_suffix, updated_at = ? WHERE workspace_id = ? AND provider_id = ? AND status = 'active'", args: [prefix, now, workspaceId, providerId] });
+       if (prefix !== current.prefix) { const models = await transaction.execute({ sql: "SELECT id, gateway_suffix FROM provider_models WHERE workspace_id = ? AND provider_id = ? AND status = 'active'", args: [workspaceId, providerId] }); for (const item of models.rows) await assertProviderModelPublicIdAvailable(transaction, workspaceId, `${prefix}/${String(item.gateway_suffix)}`, String(item.id)); }
+       await transaction.execute({ sql: `UPDATE providers SET name = ?, prefix = ?, normalized_prefix = ?, base_url = ?, protocol = ?, auth_type = ?, headers_json = ?, support_prompt_cache_key = ?, enabled = ?, desired_revision = desired_revision + 1, applied_revision = NULL, updated_at = ? WHERE workspace_id = ? AND id = ? AND status = 'active'`, args: [name, prefix, prefix, baseUrl, protocol, authType, JSON.stringify(headers), supportPromptCacheKey ? 1 : 0, enabled ? 1 : 0, now, workspaceId, providerId] });
+       if (prefix !== current.prefix) {
+          await transaction.execute({ sql: "UPDATE provider_models SET gateway_model_id = ? || '/' || gateway_suffix, updated_at = ? WHERE workspace_id = ? AND provider_id = ? AND status = 'active'", args: [prefix, now, workspaceId, providerId] });
+          await renameRoutingModelTargets(transaction, workspaceId, providerId, current.prefix, prefix);
+          const renamedModels = await transaction.execute({ sql: "SELECT id,gateway_model_id FROM provider_models WHERE workspace_id=? AND provider_id=? AND status='active'", args: [workspaceId, providerId] });
+          for (const item of renamedModels.rows) await renameSharedAliasTargetsForSourceModel(transaction, workspaceId, String(item.id), String(item.gateway_model_id));
       }
     });
   } catch (error) { if (isUnique(error)) throw new ProviderError("Provider prefix or gateway model ID is already in use in this workspace.", 409); throw error; }
@@ -477,10 +526,11 @@ export async function deleteProvider(workspaceId: string, providerId: string): P
   await inProviderWriteTransaction(workspaceId, providerId, async (transaction) => {
     const provider = await activeProviderInTransaction(transaction, workspaceId, providerId);
     if (!provider) throw notFound();
+    if (String(provider.prefix) === "codex") throw new ProviderError("The built-in Codex provider cannot be deleted.", 409);
     const ownership = await transaction.execute({ sql: "SELECT claude_fingerprints_json FROM provider_projection_ownership WHERE workspace_id = ? AND provider_id = ?", args: [workspaceId, providerId] });
     const tombstone = await transaction.execute({ sql: "SELECT claude_fingerprints_json FROM provider_projection_tombstones WHERE workspace_id = ? AND provider_id = ?", args: [workspaceId, providerId] });
     const now = Date.now();
-    await transaction.batch([
+       await transaction.batch([
       { sql: "UPDATE provider_credentials SET status = 'deleted', deleted_at = ?, updated_at = ? WHERE workspace_id = ? AND provider_id = ? AND status = 'active'", args: [now, now, workspaceId, providerId] },
       { sql: "UPDATE provider_models SET status = 'deleted', deleted_at = ?, updated_at = ? WHERE workspace_id = ? AND provider_id = ? AND status = 'active'", args: [now, now, workspaceId, providerId] },
       { sql: "UPDATE providers SET status = 'deleted', deleted_at = ?, desired_revision = desired_revision + 1, applied_revision = NULL, updated_at = ? WHERE workspace_id = ? AND id = ? AND status = 'active'", args: [now, now, workspaceId, providerId] },
@@ -497,27 +547,28 @@ function credentialSecret(input: unknown, required: boolean): string | undefined
   if (typeof input !== "string" || !input.trim() || input.length > 8192 || input.includes("\0") || input.includes("\r") || input.includes("\n")) throw new ProviderError("Provider credential value is invalid.", 400);
   return input;
 }
-export async function createProviderCredential(workspaceId: string, providerId: string, input: { name: unknown; key: unknown; enabled?: unknown }): Promise<ProviderCredential> {
+export async function createProviderCredential(workspaceId: string, providerId: string, input: { name: unknown; key: unknown; enabled?: unknown; rpmLimit?: unknown; maxConcurrency?: unknown }): Promise<ProviderCredential> {
   const id = randomUUID(); const name = credentialName(input.name); const secret = credentialSecret(input.key, true)!;
-  const enabled = input.enabled === undefined ? true : validateEnabled(input.enabled);
+  const enabled = input.enabled === undefined ? true : validateEnabled(input.enabled); const rpmLimit = validateOptionalPositive(input.rpmLimit, "RPM limit"); const maxConcurrency = validateOptionalPositive(input.maxConcurrency, "Max concurrency");
   let priority = 0; let now = 0;
   try {
     await inProviderWriteTransaction(workspaceId, providerId, async (transaction) => {
-      const provider = await activeProviderInTransaction(transaction, workspaceId, providerId); if (!provider) throw notFound();
+       const provider = await activeProviderInTransaction(transaction, workspaceId, providerId); if (!provider) throw notFound();
+       if (String(provider.prefix) === "codex") throw new ProviderError("Codex built-in models cannot be created through generic provider CRUD.", 409);
       if (provider.auth_type === "none") throw new ProviderError("This provider does not use credentials.", 409);
       const priorityResult = await transaction.execute({ sql: "SELECT COALESCE(MAX(priority), -1) AS max_priority FROM provider_credentials WHERE workspace_id = ? AND provider_id = ? AND status = 'active'", args: [workspaceId, providerId] });
       priority = Number(priorityResult.rows[0]?.max_priority ?? -1) + 1;
       now = Date.now();
       await transaction.batch([
-        { sql: "INSERT INTO provider_credentials (id, workspace_id, provider_id, name, normalized_name, encrypted_secret, enabled, priority, status, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL)", args: [id, workspaceId, providerId, name, name.toLocaleLowerCase("en-US"), encryptSecret(secret, id, workspaceId, providerId), enabled ? 1 : 0, priority, now, now] },
-        touchProvider(workspaceId, providerId, now),
-      ]);
+         { sql: "INSERT INTO provider_credentials (id, workspace_id, provider_id, name, normalized_name, encrypted_secret, enabled, priority, rpm_limit, max_concurrency, status, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL)", args: [id, workspaceId, providerId, name, name.toLocaleLowerCase("en-US"), encryptSecret(secret, id, workspaceId, providerId), enabled ? 1 : 0, priority, rpmLimit ?? null, maxConcurrency ?? null, now, now] },
+         touchProvider(workspaceId, providerId, now),
+       ]);
     });
   } catch (error) { if (isUnique(error)) throw new ProviderError("Provider credential name is already in use.", 409); throw error; }
-  return { id, workspaceId, providerId, name, key: MASKED_SECRET, enabled, priority, createdAt: now, updatedAt: now };
+  return { id, workspaceId, providerId, name, key: MASKED_SECRET, enabled, priority, ...(rpmLimit ? { rpmLimit } : {}), ...(maxConcurrency ? { maxConcurrency } : {}), createdAt: now, updatedAt: now };
 }
 
-export async function updateProviderCredential(workspaceId: string, providerId: string, credentialId: string, input: { name?: unknown; key?: unknown; enabled?: unknown }): Promise<ProviderCredential> {
+export async function updateProviderCredential(workspaceId: string, providerId: string, credentialId: string, input: { name?: unknown; key?: unknown; enabled?: unknown; rpmLimit?: unknown; maxConcurrency?: unknown }): Promise<ProviderCredential> {
   if (!isProviderId(credentialId)) throw notFound("Provider credential");
   if (!Object.keys(input).length) throw new ProviderError("Provider credential update is required.", 400);
   const secret = credentialSecret(input.key, false);
@@ -525,16 +576,17 @@ export async function updateProviderCredential(workspaceId: string, providerId: 
   try {
     await inProviderWriteTransaction(workspaceId, providerId, async (transaction) => {
       if (!await activeProviderInTransaction(transaction, workspaceId, providerId)) throw notFound();
-      const result = await transaction.execute({ sql: "SELECT id, workspace_id, provider_id, name, enabled, priority, created_at, updated_at FROM provider_credentials WHERE workspace_id = ? AND provider_id = ? AND id = ? AND status = 'active'", args: [workspaceId, providerId, credentialId] });
+       const result = await transaction.execute({ sql: "SELECT id, workspace_id, provider_id, name, enabled, priority, rpm_limit, max_concurrency, created_at, updated_at FROM provider_credentials WHERE workspace_id = ? AND provider_id = ? AND id = ? AND status = 'active'", args: [workspaceId, providerId, credentialId] });
       const row = result.rows[0] as unknown as CredentialRow | undefined; if (!row) throw notFound("Provider credential");
       const name = input.name === undefined ? row.name : credentialName(input.name);
       const enabled = input.enabled === undefined ? Number(row.enabled) === 1 : validateEnabled(input.enabled);
-      const now = Date.now();
-      await transaction.batch([
-        { sql: "UPDATE provider_credentials SET name = ?, normalized_name = ?, encrypted_secret = COALESCE(?, encrypted_secret), enabled = ?, updated_at = ? WHERE workspace_id = ? AND provider_id = ? AND id = ? AND status = 'active'", args: [name, name.toLocaleLowerCase("en-US"), secret === undefined ? null : encryptSecret(secret, credentialId, workspaceId, providerId), enabled ? 1 : 0, now, workspaceId, providerId, credentialId] },
+       const rpmLimit = input.rpmLimit === undefined ? (row.rpm_limit == null ? undefined : Number(row.rpm_limit)) : validateOptionalPositive(input.rpmLimit, "RPM limit"); const maxConcurrency = input.maxConcurrency === undefined ? (row.max_concurrency == null ? undefined : Number(row.max_concurrency)) : validateOptionalPositive(input.maxConcurrency, "Max concurrency"); const now = Date.now();
+       await transaction.batch([
+         { sql: "UPDATE provider_credentials SET name = ?, normalized_name = ?, encrypted_secret = COALESCE(?, encrypted_secret), enabled = ?, rpm_limit = ?, max_concurrency = ?, updated_at = ? WHERE workspace_id = ? AND provider_id = ? AND id = ? AND status = 'active'", args: [name, name.toLocaleLowerCase("en-US"), secret === undefined ? null : encryptSecret(secret, credentialId, workspaceId, providerId), enabled ? 1 : 0, rpmLimit ?? null, maxConcurrency ?? null, now, workspaceId, providerId, credentialId] },
         touchProvider(workspaceId, providerId, now),
       ]);
-      updated = { ...credentialFromRow(row), name, enabled, updatedAt: now };
+       const { rpmLimit: _previousRpm, maxConcurrency: _previousConcurrency, ...credential } = credentialFromRow(row);
+       updated = { ...credential, name, enabled, ...(rpmLimit === undefined ? {} : { rpmLimit }), ...(maxConcurrency === undefined ? {} : { maxConcurrency }), updatedAt: now };
     });
   } catch (error) { if (isUnique(error)) throw new ProviderError("Provider credential name is already in use.", 409); throw error; }
   if (!updated) throw notFound("Provider credential");
@@ -574,12 +626,13 @@ export async function readProviderCredentialSecret(workspaceId: string, provider
   return decryptSecret(row.encrypted_secret, String(row.id), String(row.workspace_id), String(row.provider_id));
 }
 
-function modelInput(input: { name: unknown; gatewaySuffix: unknown; upstreamModel: unknown; enabled?: unknown }, prefix: string) {
+function modelInput(input: { name: unknown; gatewaySuffix: unknown; upstreamModel: unknown; enabled?: unknown; source?: unknown; reasoningCapability?: unknown }, prefix: string) {
   const suffix = fieldText(input.gatewaySuffix, "Gateway model suffix", 128);
   if (!SUFFIX.test(suffix)) throw new ProviderError("Gateway model suffix is invalid.", 400);
-  return { name: fieldText(input.name, "Model name", 120), gatewaySuffix: suffix, gatewayModelId: `${prefix}/${suffix}`, upstreamModel: fieldText(input.upstreamModel, "Upstream model ID", 256), enabled: input.enabled === undefined ? true : validateEnabled(input.enabled) };
+  const source: "custom" | "builtin" = input.source === undefined ? "custom" : input.source === "builtin" ? "builtin" : input.source === "custom" ? "custom" : (() => { throw new ProviderError("Model source is invalid.", 400); })();
+  return { name: fieldText(input.name, "Model name", 120), gatewaySuffix: suffix, gatewayModelId: `${prefix}/${suffix}`, upstreamModel: fieldText(input.upstreamModel, "Upstream model ID", 256), enabled: input.enabled === undefined ? true : validateEnabled(input.enabled), source, reasoningCapability: validateReasoningCapability(input.reasoningCapability) };
 }
-export async function createProviderModel(workspaceId: string, providerId: string, input: { name: unknown; gatewaySuffix: unknown; upstreamModel: unknown; enabled?: unknown }): Promise<ProviderModel> {
+export async function createProviderModel(workspaceId: string, providerId: string, input: { name: unknown; gatewaySuffix: unknown; upstreamModel: unknown; enabled?: unknown; source?: unknown; reasoningCapability?: unknown }): Promise<ProviderModel> {
   const id = randomUUID();
   const name = fieldText(input.name, "Model name", 120);
   const gatewaySuffix = fieldText(input.gatewaySuffix, "Gateway model suffix", 128);
@@ -590,10 +643,11 @@ export async function createProviderModel(workspaceId: string, providerId: strin
   try {
     await inProviderWriteTransaction(workspaceId, providerId, async (transaction) => {
       const provider = await activeProviderInTransaction(transaction, workspaceId, providerId); if (!provider) throw notFound();
-      model = modelInput({ name, gatewaySuffix, upstreamModel, enabled }, provider.prefix);
+      if (String(provider.prefix) === "codex") throw new ProviderError("Codex built-in models cannot be created through generic provider CRUD.", 409);
+       model = modelInput({ ...input, name, gatewaySuffix, upstreamModel, enabled }, provider.prefix); await assertProviderModelPublicIdAvailable(transaction, workspaceId, model.gatewayModelId);
       now = Date.now();
       await transaction.batch([
-        { sql: "INSERT INTO provider_models (id, workspace_id, provider_id, name, gateway_suffix, gateway_model_id, upstream_model, enabled, status, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL)", args: [id, workspaceId, providerId, model.name, model.gatewaySuffix, model.gatewayModelId, model.upstreamModel, model.enabled ? 1 : 0, now, now] },
+         { sql: "INSERT INTO provider_models (id, workspace_id, provider_id, name, gateway_suffix, gateway_model_id, upstream_model, enabled, source, reasoning_json, status, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL)", args: [id, workspaceId, providerId, model.name, model.gatewaySuffix, model.gatewayModelId, model.upstreamModel, model.enabled ? 1 : 0, model.source, model.reasoningCapability ? JSON.stringify(model.reasoningCapability) : null, now, now] },
         touchProvider(workspaceId, providerId, now),
       ]);
     });
@@ -601,22 +655,25 @@ export async function createProviderModel(workspaceId: string, providerId: strin
   if (!model) throw notFound("Provider model");
   return { id, workspaceId, providerId, ...model, createdAt: now, updatedAt: now };
 }
-export async function updateProviderModel(workspaceId: string, providerId: string, modelId: string, input: { name?: unknown; gatewaySuffix?: unknown; upstreamModel?: unknown; enabled?: unknown }): Promise<ProviderModel> {
+export async function updateProviderModel(workspaceId: string, providerId: string, modelId: string, input: { name?: unknown; gatewaySuffix?: unknown; upstreamModel?: unknown; enabled?: unknown; source?: unknown; reasoningCapability?: unknown }): Promise<ProviderModel> {
   if (!isProviderId(modelId)) throw notFound("Provider model");
   if (!Object.keys(input).length) throw new ProviderError("Provider model update is required.", 400);
   let updated: ProviderModel | undefined;
   try {
     await inProviderWriteTransaction(workspaceId, providerId, async (transaction) => {
       const provider = await activeProviderInTransaction(transaction, workspaceId, providerId); if (!provider) throw notFound();
-      const result = await transaction.execute({ sql: "SELECT id, workspace_id, provider_id, name, gateway_suffix, gateway_model_id, upstream_model, enabled, created_at, updated_at FROM provider_models WHERE workspace_id = ? AND provider_id = ? AND id = ? AND status = 'active'", args: [workspaceId, providerId, modelId] });
-      const existing = result.rows[0] as unknown as ModelRow | undefined; if (!existing) throw notFound("Provider model");
-      const model = modelInput({ name: input.name === undefined ? existing.name : input.name, gatewaySuffix: input.gatewaySuffix === undefined ? existing.gateway_suffix : input.gatewaySuffix, upstreamModel: input.upstreamModel === undefined ? existing.upstream_model : input.upstreamModel, enabled: input.enabled === undefined ? Number(existing.enabled) === 1 : input.enabled }, provider.prefix);
+       const result = await transaction.execute({ sql: "SELECT id, workspace_id, provider_id, name, gateway_suffix, gateway_model_id, upstream_model, enabled, source, reasoning_json, created_at, updated_at FROM provider_models WHERE workspace_id = ? AND provider_id = ? AND id = ? AND status = 'active'", args: [workspaceId, providerId, modelId] });
+       const existing = result.rows[0] as unknown as ModelRow | undefined; if (!existing) throw notFound("Provider model");
+       const current = modelFromRow(existing); const model = modelInput({ name: input.name === undefined ? existing.name : input.name, gatewaySuffix: input.gatewaySuffix === undefined ? existing.gateway_suffix : input.gatewaySuffix, upstreamModel: input.upstreamModel === undefined ? existing.upstream_model : input.upstreamModel, enabled: input.enabled === undefined ? Number(existing.enabled) === 1 : input.enabled, source: input.source === undefined ? current.source : input.source, reasoningCapability: input.reasoningCapability === undefined ? current.reasoningCapability : input.reasoningCapability }, provider.prefix); await assertProviderModelPublicIdAvailable(transaction, workspaceId, model.gatewayModelId, modelId);
+       if (String(existing.source) === "builtin" && String(provider.prefix) === "codex" && (model.name !== String(existing.name) || model.gatewaySuffix !== String(existing.gateway_suffix) || model.upstreamModel !== String(existing.upstream_model) || model.source !== "builtin")) throw new ProviderError("Codex built-in model identity is immutable.", 409);
       const now = Date.now();
       await transaction.batch([
-        { sql: "UPDATE provider_models SET name = ?, gateway_suffix = ?, gateway_model_id = ?, upstream_model = ?, enabled = ?, updated_at = ? WHERE workspace_id = ? AND provider_id = ? AND id = ? AND status = 'active'", args: [model.name, model.gatewaySuffix, model.gatewayModelId, model.upstreamModel, model.enabled ? 1 : 0, now, workspaceId, providerId, modelId] },
-        touchProvider(workspaceId, providerId, now),
-      ]);
-      updated = { id: modelId, workspaceId, providerId, ...model, createdAt: Number(existing.created_at), updatedAt: now };
+         { sql: "UPDATE provider_models SET name = ?, gateway_suffix = ?, gateway_model_id = ?, upstream_model = ?, enabled = ?, source = ?, reasoning_json = ?, updated_at = ? WHERE workspace_id = ? AND provider_id = ? AND id = ? AND status = 'active'", args: [model.name, model.gatewaySuffix, model.gatewayModelId, model.upstreamModel, model.enabled ? 1 : 0, model.source, model.reasoningCapability ? JSON.stringify(model.reasoningCapability) : null, now, workspaceId, providerId, modelId] },
+         touchProvider(workspaceId, providerId, now),
+       ]);
+       if (existing.gateway_model_id !== model.gatewayModelId) await renameRoutingModelTarget(transaction, workspaceId, String(existing.gateway_model_id), model.gatewayModelId);
+       if (existing.gateway_model_id !== model.gatewayModelId) await renameSharedAliasTargetsForSourceModel(transaction, workspaceId, modelId, model.gatewayModelId);
+       updated = { id: modelId, workspaceId, providerId, ...model, createdAt: Number(existing.created_at), updatedAt: now };
     });
   } catch (error) { if (isUnique(error)) throw new ProviderError("Gateway model ID is already in use in this workspace.", 409); throw error; }
   if (!updated) throw notFound("Provider model");
@@ -626,6 +683,8 @@ export async function deleteProviderModel(workspaceId: string, providerId: strin
   if (!isProviderId(modelId)) throw notFound("Provider model");
   await inProviderWriteTransaction(workspaceId, providerId, async (transaction) => {
     if (!await activeProviderInTransaction(transaction, workspaceId, providerId)) throw notFound();
+    const owner = await activeProviderInTransaction(transaction, workspaceId, providerId);
+    if (owner?.prefix === "codex") throw new ProviderError("Codex built-in models cannot be deleted.", 409);
     const now = Date.now();
     const result = await transaction.execute({ sql: "UPDATE provider_models SET status = 'deleted', deleted_at = ?, updated_at = ? WHERE workspace_id = ? AND provider_id = ? AND id = ? AND status = 'active'", args: [now, now, workspaceId, providerId, modelId] });
     if (result.rowsAffected !== 1) throw notFound("Provider model");
@@ -644,8 +703,9 @@ export async function deleteProvidersForWorkspace(workspaceId: string): Promise<
     const now = Date.now();
     await transaction.batch([
       ...rows.rows.map((row) => providerTombstone(workspaceId, String(row.id), Number(row.desired_revision) + 1, mergedOwnershipFingerprints(fingerprints.get(String(row.id)), tombstoneFingerprints.get(String(row.id))), now)),
-      { sql: "DELETE FROM provider_sync_state WHERE workspace_id = ?", args: [workspaceId] },
-      { sql: "DELETE FROM provider_projection_ownership WHERE workspace_id = ?", args: [workspaceId] },
+       { sql: "DELETE FROM provider_sync_state WHERE workspace_id = ?", args: [workspaceId] },
+       { sql: "DELETE FROM provider_projection_ownership WHERE workspace_id = ?", args: [workspaceId] },
+       { sql: "DELETE FROM provider_native_cleanup_pending WHERE workspace_id = ?", args: [workspaceId] },
       { sql: "DELETE FROM provider_credentials WHERE workspace_id = ?", args: [workspaceId] },
       { sql: "DELETE FROM provider_models WHERE workspace_id = ?", args: [workspaceId] },
       { sql: "DELETE FROM providers WHERE workspace_id = ?", args: [workspaceId] },

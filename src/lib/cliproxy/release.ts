@@ -144,6 +144,14 @@ function hasStandardLinuxAsset(release: GitHubRelease, version: string): boolean
 }
 
 export async function getAvailableVersions(): Promise<AvailableVersions> {
+  // A compiled E2E process may provide only reviewed semver strings. This
+  // keeps the browser lifecycle panel from contacting GitHub during a private
+  // transport fixture; production never reads the override.
+  if (process.env.NODE_ENV === "test" && process.env.RAWROUTE_CLIPROXY_TEST_VERSIONS) {
+    const versions = process.env.RAWROUTE_CLIPROXY_TEST_VERSIONS.split(",").map((item) => normalizeVersion(item.trim()));
+    if (!versions.length) throw new Error("RAWROUTE_CLIPROXY_TEST_VERSIONS must contain a version");
+    return { latest: versions[0]!, versions: versions.map((version) => ({ version, publishedAt: null })) };
+  }
   const [latestRelease, listBytes] = await Promise.all([
     fetchRelease(`${GITHUB_API}/releases/latest`),
     fetchBytes(`${GITHUB_API}/releases?per_page=100&page=1`, MAX_JSON_BYTES),

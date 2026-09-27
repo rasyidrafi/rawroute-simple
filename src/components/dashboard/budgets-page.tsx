@@ -1,458 +1,1093 @@
 "use client";
-
-import { useState } from "react";
-import { reportEvent } from "@/lib/logging/client";
-import { cn } from "cn";
-import { ChevronsUpDownIcon, PlusIcon, SparklesIcon, Trash2Icon } from "lucide-react";
-import { Confirm, Metadata, notify, Page } from "@/components/dashboard/page-ui";
-import { DataTableHeader } from "@/components/dashboard/data-table-header";
+import { useCallback, useEffect, useState } from "react";
+import {
+  CalendarDaysIcon,
+  PencilIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  Trash2Icon,
+} from "lucide-react";
+import { Confirm, notify, Page } from "@/components/dashboard/page-ui";
+import {
+  Alert,
+  AlertAction,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { Budget, GatewayKey } from "@/mock/dashboard-data";
+import { accountingFetch } from "@/lib/accounting-client";
+import {
+  formatLedgerDateTimeLocal,
+  isAmbiguousLedgerDateTimeLocal,
+  parseLedgerDateTimeLocal,
+} from "@/lib/timezone-client";
+import {
+  budgetPolicyActionsDisabled,
+  runBudgetPolicyAction,
+} from "./budget-policy-actions";
+import { runLatestRequest, useLatestRequest } from "./use-latest-request";
 
-const budgetDateFormatter = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-});
-
-export function Budgets({
-  budgets,
-  setBudgets,
-  keys,
-  workspaceId,
-}: {
+type Budget = {
+  keyId: string;
+  keyName: string;
+  limitMicros: number;
+  spentMicros: number;
+  reservedMicros: number;
+  enabled: boolean;
+};
+type Data = {
+  timeZone: string;
+  window: {
+    startAt: number;
+    endAt: number;
+    durationMs: number;
+    unlimited: boolean;
+    autoEnd: boolean;
+    activeSessionId: string | null;
+    anchor: {
+      accountId: string;
+      resetAt: number | null;
+      checkedAt: number | null;
+      error: string | null;
+    } | null;
+  };
+  keys: Array<{ id: string; name: string; status: string }>;
   budgets: Budget[];
-  setBudgets: React.Dispatch<React.SetStateAction<Budget[]>>;
-  keys: GatewayKey[];
-  workspaceId: string;
-}) {
-  const [keyId, setKeyId] = useState("");
-  const [limit, setLimit] = useState("50");
-  const [unlimited, setUnlimited] = useState(false);
-  const [confirmUnlimited, setConfirmUnlimited] = useState(false);
-  const [edit, setEdit] = useState<Budget | null>(null);
-  const [editLimit, setEditLimit] = useState("");
-  const [sortBy, setSortBy] = useState<"limit" | "usage" | "name">("limit");
+  unlimited: {
+    exclusions: string[];
+    active: boolean;
+    autoEnd: boolean;
+    activeSessionId: string | null;
+  };
+  beyondLimits: { enabled: boolean; models: string[] };
+  modelOptions: Array<{ id: string; name: string; type: string }>;
+  history: Array<{
+    id: string;
+    startedAt: number;
+    endedAt: number | null;
+    endReason: string | null;
+  }>;
+};
+const money = (value: number) => `$${(value / 1_000_000).toFixed(2)}`;
+const dateTime = (value: number, zone: string) =>
+  new Intl.DateTimeFormat("en-GB", {
+    timeZone: zone,
+    dateStyle: "medium",
+    timeStyle: "medium",
+  }).format(value);
+
+export function Budgets({ workspaceId }: { workspaceId: string }) {
+  const [data, setData] = useState<Data>();
+  const [error, setError] = useState<string>();
+  const [loading, setLoading] = useState(true);
+  const [edit, setEdit] = useState<Budget | "new" | null>(null);
+  const [remove, setRemove] = useState<Budget | null>(null);
   const [windowOpen, setWindowOpen] = useState(false);
-  const [windowStart, setWindowStart] = useState("2026-09-16");
-  const [windowEnd, setWindowEnd] = useState("2026-09-23");
-  const [windowStartDraft, setWindowStartDraft] = useState(windowStart);
-  const [windowEndDraft, setWindowEndDraft] = useState(windowEnd);
-  const [removeBudget, setRemoveBudget] = useState<Budget | null>(null);
-  const [beyondLimits, setBeyondLimits] = useState(false);
-  const allocated = budgets.reduce((sum, budget) => sum + budget.limit, 0);
-  const spent = budgets.reduce((sum, budget) => sum + budget.spent, 0);
-  const dateLabel = (value: string) => budgetDateFormatter.format(new Date(`${value}T00:00:00`));
-  const sortedBudgets = [...budgets].sort((left, right) => {
-    if (sortBy === "name") return left.key.localeCompare(right.key);
-    if (sortBy === "usage") return right.spent / right.limit - left.spent / left.limit;
-    return right.limit - left.limit;
-  });
-  function createBudget() {
-    const key = keys.find((item) => item.id === keyId);
-    const amount = Number(limit);
-    if (!key || !Number.isFinite(amount) || amount <= 0) return;
-    setBudgets((items) => [
-      ...items,
+  const [anchorOpen, setAnchorOpen] = useState(false);
+  const [confirm, setConfirm] = useState<{
+    active: boolean;
+    autoEnd: boolean;
+  } | null>(null);
+  const requests = useLatestRequest();
+  const load = useCallback(async () => {
+    await runLatestRequest(
+      requests,
+      (signal) =>
+        accountingFetch<Data>(workspaceId, "/api/budgets", { signal }),
       {
-        id: crypto.randomUUID(),
-        key: key.name,
-        limit: amount,
-        spent: 0,
-        enabled: true,
+        onStart: () => setLoading(true),
+        onSuccess: (next) => {
+          setData(next);
+          setError(undefined);
+        },
+        onError: (reason) =>
+          setError(
+            reason instanceof Error
+              ? reason.message
+              : "Budgets could not load.",
+          ),
+        onFinally: () => setLoading(false),
       },
-    ]);
-    setKeyId("");
-    notify("Budget created");
+    );
+  }, [requests, workspaceId]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  const policySnapshot = {
+    hasData: Boolean(data),
+    loading,
+    error,
+  };
+  const policyActionsDisabled = budgetPolicyActionsDisabled(policySnapshot);
+  useEffect(() => {
+    if (!policyActionsDisabled) return;
+    setConfirm(null);
+    setRemove(null);
+  }, [policyActionsDisabled]);
+  async function setUnlimited(active: boolean, autoEnd: boolean) {
+    if (policyActionsDisabled) {
+      setConfirm(null);
+      return;
+    }
+    try {
+      await accountingFetch(workspaceId, "/api/budgets/unlimited", {
+        method: "PATCH",
+        body: JSON.stringify({ active, autoEnd }),
+      });
+      setConfirm(null);
+      await load();
+      notify(
+        active ? "Unlimited Mode activated" : "Unlimited Mode deactivated",
+      );
+    } catch (reason) {
+      notify(
+        reason instanceof Error
+          ? reason.message
+          : "Unlimited Mode could not update.",
+        "error",
+      );
+    }
+  }
+  async function deleteBudget() {
+    if (policyActionsDisabled) {
+      setRemove(null);
+      return;
+    }
+    if (!remove) return;
+    try {
+      await accountingFetch(
+        workspaceId,
+        `/api/budgets/${encodeURIComponent(remove.keyId)}`,
+        { method: "DELETE" },
+      );
+      setRemove(null);
+      await load();
+      notify("Budget deleted");
+    } catch (reason) {
+      notify(
+        reason instanceof Error ? reason.message : "Budget could not delete.",
+        "error",
+      );
+    }
   }
   return (
     <Page>
+      {error ? (
+        <Alert variant="destructive">
+          <AlertTitle>Budget data may be out of date</AlertTitle>
+          <AlertDescription>
+            {error} Showing the last successful snapshot. Policy changes are
+            disabled until a refresh succeeds.
+          </AlertDescription>
+          <AlertAction>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={loading}
+              onClick={() => void load()}
+            >
+              Retry
+            </Button>
+          </AlertAction>
+        </Alert>
+      ) : null}
       <Card>
         <CardHeader>
           <CardTitle>Budget window</CardTitle>
           <CardDescription>
-            Choose the shared mock accounting window used by every gateway key.
+            {data?.window.anchor
+              ? "Anchored to an owned Codex weekly reset. Provider reset instants are UTC; custom intervals use the server ledger timezone."
+              : "Custom intervals roll forward in the server ledger timezone."}
+          </CardDescription>
+          <CardAction>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                disabled={loading}
+                onClick={() => void load()}
+              >
+                <RefreshCwIcon data-icon="inline-start" />
+                Refresh
+              </Button>
+              <Button
+                variant="outline"
+                disabled={policyActionsDisabled}
+                onClick={() => setAnchorOpen(true)}
+              >
+                Codex anchor
+              </Button>
+              <Button
+                variant="outline"
+                disabled={policyActionsDisabled}
+                onClick={() => setWindowOpen(true)}
+              >
+                <CalendarDaysIcon data-icon="inline-start" />
+                Custom window
+              </Button>
+            </div>
+          </CardAction>
+        </CardHeader>
+        <CardContent>
+          {data ? (
+            <>
+              <p>
+                {dateTime(data.window.startAt, data.timeZone)} –{" "}
+                {dateTime(data.window.endAt, data.timeZone)}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {data.window.anchor
+                  ? `Codex account anchor${data.window.anchor.error ? ` · refresh issue: ${data.window.anchor.error}` : " · refreshed from weekly quota"}`
+                  : `${data.timeZone} · ${(data.window.durationMs / 3_600_000).toFixed(3)} hour interval`}
+              </p>
+            </>
+          ) : (
+            <p>{loading ? "Loading…" : "Budget data is unavailable."}</p>
+          )}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Gateway key budgets</CardTitle>
+          <CardDescription>
+            USD values use integer micros and include held reservations.
           </CardDescription>
           <CardAction>
             <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                setWindowStartDraft(windowStart);
-                setWindowEndDraft(windowEnd);
-                setWindowOpen(true);
-              }}
+              disabled={policyActionsDisabled}
+              onClick={() => setEdit("new")}
             >
-              Edit window
+              <PlusIcon data-icon="inline-start" />
+              New budget
             </Button>
           </CardAction>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-4 md:grid-cols-2">
-            <Metadata label="Window anchor" value={`${dateLabel(windowStart)} - ${dateLabel(windowEnd)}`} />
-            <Metadata label="Next reset" value={`${dateLabel(windowEnd)} at 00:00`} />
-          </div>
+          <BudgetTable
+            data={data}
+            workspaceId={workspaceId}
+            reload={load}
+            disabled={policyActionsDisabled}
+            onEdit={setEdit}
+            onDelete={setRemove}
+          />
         </CardContent>
       </Card>
-      <Dialog open={windowOpen} onOpenChange={setWindowOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Edit budget window</DialogTitle>
-            <DialogDescription>Choose a custom date range for this local mock window.</DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-4 sm:grid-cols-2">
-            <label className="grid gap-2 text-sm font-medium" htmlFor="budget-window-start">Start date<Input id="budget-window-start" type="date" value={windowStartDraft} onChange={(event) => setWindowStartDraft(event.target.value)} /></label>
-            <label className="grid gap-2 text-sm font-medium" htmlFor="budget-window-end">End date<Input id="budget-window-end" type="date" value={windowEndDraft} onChange={(event) => setWindowEndDraft(event.target.value)} /></label>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setWindowOpen(false)}>Cancel</Button>
-            <Button disabled={!windowStartDraft || !windowEndDraft || windowStartDraft >= windowEndDraft} onClick={() => {
-              setWindowStart(windowStartDraft);
-              setWindowEnd(windowEndDraft);
-              setWindowOpen(false);
-               reportEvent("budgets.window", { workspaceId });
-              notify("Mock budget window updated");
-            }}>Save window</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
       <Card>
         <CardHeader>
-          <CardTitle>Budgets</CardTitle>
+          <CardTitle>Limit policies</CardTitle>
           <CardDescription>
-            Weekly USD limits for each gateway key. These controls update local mock state only; this clone does not route AI requests.
+            Changes apply to newly admitted gateway attempts.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="space-y-5">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-xl border bg-muted/20 p-4">
-                <span className="text-sm text-muted-foreground">
-              Total budget allocated
-                </span>
-                <div className="mt-1 text-2xl font-semibold">
-                  ${allocated.toFixed(2)}
-                </div>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Across {budgets.length} configured {budgets.length === 1 ? "budget" : "budgets"} in this window
-                </p>
-              </div>
-              <div className="rounded-xl border bg-muted/20 p-4">
-                <div className="flex justify-between text-sm text-muted-foreground">
-                  <span>Total budget used</span>
-                  <span>{allocated ? `${Math.round((spent / allocated) * 100)}%` : "0%"}</span>
-                </div>
-                <div className="mt-1 text-2xl font-semibold">
-                  ${spent.toFixed(2)}
-                </div>
-                <Progress
-                  className="mt-3"
-                  value={allocated ? Math.min(100, (spent / allocated) * 100) : 0}
-                />
-                <div className="mt-2 text-xs text-muted-foreground">{unlimited ? "Unlimited Mode active" : "Measured across the shared budget window"}</div>
-              </div>
-            </div>
-            <div className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row">
-              <Select value={keyId} onValueChange={(value) => value !== null && setKeyId(value)}>
-                <SelectTrigger className="w-full sm:w-56">
-                  <SelectValue placeholder="Select gateway key" />
-                </SelectTrigger>
-                <SelectContent>
-                  {keys
-                    .filter(
-                      (key) =>
-                        !budgets.some((budget) => budget.key === key.name),
-                    )
-                    .map((key) => (
-                      <SelectItem value={key.id} key={key.id}>
-                        {key.name}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-              <Input
-                className="sm:w-32"
-                type="number"
-                min="1"
-                value={limit}
-                onChange={(event) => setLimit(event.target.value)}
-                aria-label="Weekly USD limit"
+          <Tabs defaultValue="unlimited">
+            <TabsList>
+              <TabsTrigger value="unlimited">Unlimited Mode</TabsTrigger>
+              <TabsTrigger value="beyond">Beyond Limits</TabsTrigger>
+            </TabsList>
+            <TabsContent value="unlimited">
+              <UnlimitedPolicy
+                workspaceId={workspaceId}
+                data={data}
+                reload={load}
+                disabled={policyActionsDisabled}
+                onConfirm={(active, autoEnd) => setConfirm({ active, autoEnd })}
               />
-              <Button disabled={!keyId} onClick={createBudget}>
-                <PlusIcon />
-                Create budget
-              </Button>
-            </div>
-            <Tabs defaultValue="unlimited">
-              <TabsList>
-                <TabsTrigger value="unlimited">Unlimited Mode</TabsTrigger>
-                <TabsTrigger value="beyond">Beyond Limits</TabsTrigger>
-              </TabsList>
-              <TabsContent value="unlimited" className="mt-4">
-                  <div className="rounded-xl border p-4">
-                    <div className="flex items-center justify-between gap-4">
-                      <div>
-                        <div className="flex items-center gap-2 font-medium">
-                          <SparklesIcon className="size-4 text-amber-500" />
-                          Unlimited Mode{" "}
-                        <Badge
-                          className="ml-2"
-                          variant={unlimited ? "secondary" : "outline"}
-                        >
-                          {unlimited ? "Active" : "Inactive"}
-                        </Badge>
-                      </div>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                          Budget limits are bypassed until you deactivate Unlimited Mode.
-                      </p>
-                    </div>
-                    <Button
-                      variant={unlimited ? "unlimited-active" : "unlimited-inactive"}
-                      onClick={() => setConfirmUnlimited(true)}
-                    >
-                      {unlimited ? "Deactivate" : "Activate"}
-                    </Button>
-                  </div>
-                  <div className="mt-4 border-t pt-4">
-                    <label className="flex items-center gap-3 text-sm">
-                      <Checkbox />
-                      <span>
-                        <span className="block font-medium">
-                          Exclude expensive models
-                        </span>
-                        <span className="text-muted-foreground">
-                          These models cannot start new requests while Unlimited Mode is active.
-                        </span>
-                      </span>
-                    </label>
-                  </div>
-                  <div className="mt-4 text-xs text-muted-foreground">
-                    History: Sep 14 09:23 - Sep 14 13:11 · Deactivated manually
-                  </div>
-                </div>
-              </TabsContent>
-              <TabsContent value="beyond" className="mt-4">
-                <div className="rounded-lg border p-4">
-                  <div className="flex items-center gap-3">
-                    <Switch checked={beyondLimits} onCheckedChange={(value) => { setBeyondLimits(value); reportEvent("budgets.beyond-limits", { workspaceId }); }} aria-label="Enable Beyond Limits" />
-                    <div>
-                      <div className="font-medium">Beyond Limits</div>
-                      <p className="text-sm text-muted-foreground">
-                        Allow selected economical models after a key is over its
-                        limit.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                    {["anthropic/claude-haiku-4-5", "groq/llama-4-scout"].map(
-                      (model) => (
-                        <label
-                          key={model}
-                          className="flex items-center gap-2 rounded-md border p-2 text-sm"
-                        >
-                          <Checkbox defaultChecked />
-                          {model}
-                        </label>
-                      ),
-                    )}
-                  </div>
-                </div>
-              </TabsContent>
-            </Tabs>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div><div className="text-sm font-medium">Budget usage</div><div className="text-xs text-muted-foreground">Usage is measured across the shared budget window.</div></div>
-              <Popover>
-                <PopoverTrigger render={<Button variant="outline" className="justify-between sm:min-w-48"><span>Order: {sortBy === "limit" ? "Highest limit first" : sortBy === "usage" ? "Highest usage first" : "API key name"}</span><ChevronsUpDownIcon /></Button>} />
-                <PopoverContent align="end" className="w-56">
-                  <p className="px-2 py-1.5 text-xs text-muted-foreground">Order rows by</p>
-                  {([ ["limit", "Highest limit first"], ["usage", "Highest usage first"], ["name", "API key name"] ] as const).map(([value, label]) => <Button key={value} variant={sortBy === value ? "secondary" : "ghost"} className="h-8 w-full justify-start" onClick={() => setSortBy(value)}>{label}</Button>)}
-                </PopoverContent>
-              </Popover>
-            </div>
-            <BudgetTable
-              budgets={sortedBudgets}
-              unlimited={unlimited}
-              setBudgets={setBudgets}
-              onEdit={(budget) => {
-                setEdit(budget);
-                setEditLimit(String(budget.limit));
-              }}
-              onRemove={setRemoveBudget}
-            />
-          </div>
+            </TabsContent>
+            <TabsContent value="beyond">
+              <BeyondPolicy
+                workspaceId={workspaceId}
+                data={data}
+                reload={load}
+                disabled={policyActionsDisabled}
+              />
+            </TabsContent>
+          </Tabs>
         </CardContent>
       </Card>
-      <BudgetDialogs
-        unlimited={unlimited}
-        setUnlimited={setUnlimited}
-        confirmUnlimited={confirmUnlimited}
-        setConfirmUnlimited={setConfirmUnlimited}
-        removeBudget={removeBudget}
-        setRemoveBudget={setRemoveBudget}
-        edit={edit}
-        setEdit={setEdit}
-        editLimit={editLimit}
-        setEditLimit={setEditLimit}
-        setBudgets={setBudgets}
+      <BudgetDialog
         workspaceId={workspaceId}
+        data={data}
+        budget={edit}
+        open={edit !== null}
+        disabled={policyActionsDisabled}
+        onOpenChange={(open) => !open && setEdit(null)}
+        reload={load}
+      />
+      <WindowDialog
+        workspaceId={workspaceId}
+        data={data}
+        open={windowOpen}
+        disabled={policyActionsDisabled}
+        onOpenChange={setWindowOpen}
+        reload={load}
+      />
+      <CodexAnchorDialog
+        workspaceId={workspaceId}
+        open={anchorOpen}
+        disabled={policyActionsDisabled}
+        onOpenChange={setAnchorOpen}
+        reload={load}
+      />
+      <Confirm
+        open={Boolean(confirm)}
+        onOpenChange={(open) => !open && setConfirm(null)}
+        title={
+          confirm?.active
+            ? "Activate Unlimited Mode?"
+            : "Deactivate Unlimited Mode?"
+        }
+        description={
+          confirm?.active
+            ? "Limits are bypassed, except selected exclusions."
+            : "Budget admission resumes immediately."
+        }
+        disabled={policyActionsDisabled}
+        onConfirm={() => {
+          const action = confirm;
+          if (!action) return;
+          runBudgetPolicyAction(policySnapshot, () => setConfirm(null), () => {
+            void setUnlimited(action.active, action.autoEnd);
+          });
+        }}
+      />
+      <Confirm
+        open={Boolean(remove)}
+        onOpenChange={(open) => !open && setRemove(null)}
+        title={`Delete budget for ${remove?.keyName}?`}
+        description="This only removes the key limit, not immutable usage."
+        disabled={policyActionsDisabled}
+        onConfirm={() => {
+          if (!remove) return;
+          runBudgetPolicyAction(policySnapshot, () => setRemove(null), () => {
+            void deleteBudget();
+          });
+        }}
       />
     </Page>
   );
 }
 
 function BudgetTable({
-  budgets,
-  unlimited,
-  setBudgets,
+  data,
+  workspaceId,
+  reload,
+  disabled,
   onEdit,
-  onRemove,
+  onDelete,
 }: {
-  budgets: Budget[];
-  unlimited: boolean;
-  setBudgets: React.Dispatch<React.SetStateAction<Budget[]>>;
+  data?: Data;
+  workspaceId: string;
+  reload: () => Promise<void>;
+  disabled: boolean;
   onEdit: (budget: Budget) => void;
-  onRemove: (budget: Budget) => void;
+  onDelete: (budget: Budget) => void;
 }) {
   return (
     <Table>
-      <DataTableHeader columns={[
-        { id: "key", label: "Key" },
-        { id: "status", label: "Status" },
-        { id: "limit", label: "Limit" },
-        { id: "usage", label: "Usage" },
-        { id: "actions", label: "" },
-      ]} />
+      <TableHeader>
+        <TableRow>
+          <TableHead>Key</TableHead>
+          <TableHead>Status</TableHead>
+          <TableHead>Limit</TableHead>
+          <TableHead>Usage</TableHead>
+          <TableHead />
+        </TableRow>
+      </TableHeader>
       <TableBody>
-        {budgets.map((budget) => (
-          <TableRow key={budget.id}>
-            <TableCell><span className="font-medium">{budget.key}</span></TableCell>
-            <TableCell>
-              <div className="flex items-center gap-2">
+        {data?.budgets.map((budget) => {
+          const used = budget.spentMicros + budget.reservedMicros;
+          return (
+            <TableRow key={budget.keyId}>
+              <TableCell>{budget.keyName}</TableCell>
+              <TableCell>
                 <Switch
                   checked={budget.enabled}
-                  onCheckedChange={(enabled) => setBudgets((items) => items.map((item) => item.id === budget.id ? { ...item, enabled } : item))}
-                  aria-label={`Enable budget for ${budget.key}`}
+                  disabled={disabled}
+                  onCheckedChange={(enabled) =>
+                    void accountingFetch(workspaceId, "/api/budgets", {
+                      method: "POST",
+                      body: JSON.stringify({
+                        keyId: budget.keyId,
+                        limitMicros: budget.limitMicros,
+                        enabled,
+                      }),
+                    })
+                      .then(reload)
+                      .catch(() => notify("Budget could not update.", "error"))
+                  }
                 />
-                <Badge variant={budget.enabled ? "secondary" : "outline"}>{budget.enabled ? "Active" : "Disabled"}</Badge>
-              </div>
-            </TableCell>
-            <TableCell>
-              {unlimited
-                ? <span className="unlimited-shine inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-sm font-semibold"><span className="font-mono">∞</span>Unlimited</span>
-                : <span className="tabular-nums">${budget.limit.toFixed(2)}</span>}
-            </TableCell>
-            <TableCell className="min-w-40">
-              <div className="mb-2 flex items-center justify-between gap-3 text-xs">
-                <span className="font-medium text-muted-foreground">${budget.spent.toFixed(2)} / ${budget.limit.toFixed(2)}</span>
-                {unlimited
-                  ? <span className="unlimited-shine inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-semibold"><span className="font-mono">∞</span>Unlimited</span>
-                  : <span className="text-muted-foreground">{Math.round((budget.spent / budget.limit) * 100)}%</span>}
-              </div>
-              <div className={cn(unlimited && "unlimited-progress")}>
-                <Progress value={unlimited ? 100 : Math.min(100, (budget.spent / budget.limit) * 100)} />
-              </div>
-              <div className="mt-1 text-xs text-muted-foreground">{unlimited ? "Unlimited Usage" : `$${Math.max(0, budget.limit - budget.spent).toFixed(2)} remaining`}</div>
-            </TableCell>
-            <TableCell className="text-right">
-              <Button size="sm" variant="ghost" onClick={() => onEdit(budget)}>Edit</Button>
-              <Button size="icon-sm" variant="ghost" aria-label={`Delete budget for ${budget.key}`} onClick={() => onRemove(budget)}>
-                <Trash2Icon />
-              </Button>
+                <Badge variant={budget.enabled ? "secondary" : "outline"}>
+                  {budget.enabled ? "Active" : "Disabled"}
+                </Badge>
+              </TableCell>
+              <TableCell>
+                {data.window.unlimited
+                  ? "Unlimited"
+                  : money(budget.limitMicros)}
+              </TableCell>
+              <TableCell className="min-w-48">
+                <div className="flex justify-between text-xs">
+                  <span>{money(budget.spentMicros)} used</span>
+                  <span>{money(budget.reservedMicros)} held</span>
+                </div>
+                <Progress
+                  value={Math.min(
+                    100,
+                    budget.limitMicros ? (used / budget.limitMicros) * 100 : 0,
+                  )}
+                />
+              </TableCell>
+              <TableCell>
+                <div className="flex justify-end gap-1">
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    disabled={disabled}
+                    aria-label={`Edit ${budget.keyName}`}
+                    onClick={() => onEdit(budget)}
+                  >
+                    <PencilIcon />
+                  </Button>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    disabled={disabled}
+                    aria-label={`Delete ${budget.keyName}`}
+                    onClick={() => onDelete(budget)}
+                  >
+                    <Trash2Icon />
+                  </Button>
+                </div>
+              </TableCell>
+            </TableRow>
+          );
+        })}
+        {!data?.budgets.length ? (
+          <TableRow>
+            <TableCell colSpan={5} className="text-center">
+              No configured budgets.
             </TableCell>
           </TableRow>
-        ))}
+        ) : null}
       </TableBody>
     </Table>
   );
 }
-
-function BudgetDialogs({
-  unlimited,
-  setUnlimited,
-  confirmUnlimited,
-  setConfirmUnlimited,
-  removeBudget,
-  setRemoveBudget,
-  edit,
-  setEdit,
-  editLimit,
-  setEditLimit,
-  setBudgets,
+function BudgetDialog({
   workspaceId,
+  data,
+  budget,
+  open,
+  disabled,
+  onOpenChange,
+  reload,
 }: {
-  unlimited: boolean;
-  setUnlimited: React.Dispatch<React.SetStateAction<boolean>>;
-  confirmUnlimited: boolean;
-  setConfirmUnlimited: React.Dispatch<React.SetStateAction<boolean>>;
-  removeBudget: Budget | null;
-  setRemoveBudget: React.Dispatch<React.SetStateAction<Budget | null>>;
-  edit: Budget | null;
-  setEdit: React.Dispatch<React.SetStateAction<Budget | null>>;
-  editLimit: string;
-  setEditLimit: React.Dispatch<React.SetStateAction<string>>;
-  setBudgets: React.Dispatch<React.SetStateAction<Budget[]>>;
   workspaceId: string;
+  data?: Data;
+  budget: Budget | "new" | null;
+  open: boolean;
+  disabled: boolean;
+  onOpenChange: (open: boolean) => void;
+  reload: () => Promise<void>;
+}) {
+  const existing = budget && budget !== "new" ? budget : undefined;
+  const [keyId, setKeyId] = useState("");
+  const [usd, setUsd] = useState("50");
+  useEffect(() => {
+    if (open) {
+      setKeyId(existing?.keyId ?? "");
+      setUsd(existing ? String(existing.limitMicros / 1_000_000) : "50");
+    }
+  }, [existing?.keyId, open]);
+  async function save() {
+    try {
+      await accountingFetch(workspaceId, "/api/budgets", {
+        method: "POST",
+        body: JSON.stringify({
+          keyId,
+          limitMicros: Math.round(Number(usd) * 1_000_000),
+          enabled: existing?.enabled ?? true,
+        }),
+      });
+      onOpenChange(false);
+      await reload();
+    } catch (reason) {
+      notify(
+        reason instanceof Error ? reason.message : "Budget could not save.",
+        "error",
+      );
+    }
+  }
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{existing ? "Edit budget" : "New budget"}</DialogTitle>
+          <DialogDescription>Enter a positive USD limit.</DialogDescription>
+        </DialogHeader>
+        <FieldGroup>
+          <Field>
+            <FieldLabel>Gateway key</FieldLabel>
+            <Select
+              value={keyId}
+              onValueChange={(value) => value && setKeyId(value)}
+              disabled={disabled || Boolean(existing)}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select key" />
+              </SelectTrigger>
+              <SelectContent>
+                {data?.keys
+                  .filter((key) => key.status === "active")
+                  .map((key) => (
+                    <SelectItem key={key.id} value={key.id}>
+                      {key.name}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="budget-usd">USD limit</FieldLabel>
+            <Input
+              id="budget-usd"
+              disabled={disabled}
+              type="number"
+              min="0.000001"
+              step="0.01"
+              value={usd}
+              onChange={(event) => setUsd(event.target.value)}
+            />
+          </Field>
+        </FieldGroup>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            disabled={disabled || !keyId || Number(usd) <= 0}
+            onClick={() => void save()}
+          >
+            Save budget
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+function WindowDialog({
+  workspaceId,
+  data,
+  open,
+  disabled,
+  onOpenChange,
+  reload,
+}: {
+  workspaceId: string;
+  data?: Data;
+  open: boolean;
+  disabled: boolean;
+  onOpenChange: (open: boolean) => void;
+  reload: () => Promise<void>;
+}) {
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
+  const [original, setOriginal] = useState<{ start: number; end: number }>();
+  const [error, setError] = useState<string>();
+  useEffect(() => {
+    if (open && data) {
+      setStart(formatLedgerDateTimeLocal(data.window.startAt, data.timeZone));
+      setEnd(formatLedgerDateTimeLocal(data.window.endAt, data.timeZone));
+      setOriginal({ start: data.window.startAt, end: data.window.endAt });
+      setError(undefined);
+    }
+  }, [data, open]);
+  async function save() {
+    const originalStart =
+        original &&
+        data &&
+        start === formatLedgerDateTimeLocal(original.start, data.timeZone)
+          ? original.start
+          : undefined,
+      originalEnd =
+        original &&
+        data &&
+        end === formatLedgerDateTimeLocal(original.end, data.timeZone)
+          ? original.end
+          : undefined;
+    if (
+      data &&
+      ((!originalStart &&
+        isAmbiguousLedgerDateTimeLocal(start, data.timeZone)) ||
+        (!originalEnd && isAmbiguousLedgerDateTimeLocal(end, data.timeZone)))
+    ) {
+      setError("Choose a non-repeated DST time after editing this interval.");
+      return;
+    }
+    const startAt = data
+        ? parseLedgerDateTimeLocal(start, data.timeZone, originalStart)
+        : undefined,
+      endAt = data
+        ? parseLedgerDateTimeLocal(end, data.timeZone, originalEnd)
+        : undefined;
+    if (!startAt || !endAt || endAt <= startAt) {
+      setError("Enter an unambiguous interval in the ledger timezone.");
+      return;
+    }
+    try {
+      await accountingFetch(workspaceId, "/api/budgets/window", {
+        method: "PATCH",
+        body: JSON.stringify({ startAt, endAt }),
+      });
+      onOpenChange(false);
+      await reload();
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Window could not save.",
+      );
+    }
+  }
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Custom budget interval</DialogTitle>
+          <DialogDescription>
+            Edited repeated DST times must be unambiguous.
+          </DialogDescription>
+        </DialogHeader>
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor="window-start">Start</FieldLabel>
+            <Input
+              id="window-start"
+              disabled={disabled}
+              type="datetime-local"
+              step="0.001"
+              value={start}
+              onChange={(event) => setStart(event.target.value)}
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="window-end">End</FieldLabel>
+            <Input
+              id="window-end"
+              disabled={disabled}
+              type="datetime-local"
+              step="0.001"
+              value={end}
+              onChange={(event) => setEnd(event.target.value)}
+            />
+          </Field>
+        </FieldGroup>
+        {error ? <p role="alert">{error}</p> : null}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button disabled={disabled} onClick={() => void save()}>
+            Save window
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CodexAnchorDialog({
+  workspaceId,
+  open,
+  disabled,
+  onOpenChange,
+  reload,
+}: {
+  workspaceId: string;
+  open: boolean;
+  disabled: boolean;
+  onOpenChange: (open: boolean) => void;
+  reload: () => Promise<void>;
+}) {
+  const [accounts, setAccounts] = useState<
+    Array<{ id: string; name: string; enabled: boolean; status?: string }>
+  >([]);
+  const [accountId, setAccountId] = useState("");
+  const [error, setError] = useState<string>();
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    setError(undefined);
+    void fetch("/api/codex", {
+      signal: controller.signal,
+      headers: { "x-rawroute-workspace-id": workspaceId },
+    })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok)
+          throw new Error(payload.error || "Codex accounts could not load.");
+        if (!controller.signal.aborted)
+          setAccounts(Array.isArray(payload.accounts) ? payload.accounts : []);
+      })
+      .catch((reason: unknown) => {
+        if (!controller.signal.aborted)
+          setError(
+            reason instanceof Error
+              ? reason.message
+              : "Codex accounts could not load.",
+          );
+      });
+    return () => controller.abort();
+  }, [open, workspaceId]);
+  async function save() {
+    try {
+      await accountingFetch(workspaceId, "/api/budgets/codex-anchor", {
+        method: "PATCH",
+        body: JSON.stringify({ accountId }),
+      });
+      onOpenChange(false);
+      await reload();
+      notify("Budget window anchored to Codex weekly reset");
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Codex anchor could not save.",
+      );
+    }
+  }
+  const eligible = accounts.filter(
+    (account) =>
+      account.enabled &&
+      account.status !== "missing" &&
+      account.status !== "unavailable",
+  );
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Anchor to Codex weekly reset</DialogTitle>
+          <DialogDescription>
+            A fresh future weekly quota reset from an owned enabled account sets
+            this window. If refresh later fails, the last anchored interval
+            remains until you choose a custom window.
+          </DialogDescription>
+        </DialogHeader>
+        <FieldGroup>
+          <Field>
+            <FieldLabel>Codex account</FieldLabel>
+            <Select
+              value={accountId}
+              onValueChange={(value) => value && setAccountId(value)}
+              disabled={disabled}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select owned account" />
+              </SelectTrigger>
+              <SelectContent>
+                {eligible.map((account) => (
+                  <SelectItem key={account.id} value={account.id}>
+                    {account.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          {error ? (
+            <Field data-invalid>
+              <FieldDescription>{error}</FieldDescription>
+            </Field>
+          ) : null}
+        </FieldGroup>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button disabled={disabled || !accountId} onClick={() => void save()}>
+            Use weekly reset
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+function UnlimitedPolicy({
+  workspaceId,
+  data,
+  reload,
+  disabled,
+  onConfirm,
+}: {
+  workspaceId: string;
+  data?: Data;
+  reload: () => Promise<void>;
+  disabled: boolean;
+  onConfirm: (active: boolean, autoEnd: boolean) => void;
+}) {
+  const [exclusions, setExclusions] = useState<string[]>([]);
+  const [autoEnd, setAutoEnd] = useState(true);
+  const [pending, setPending] = useState(false);
+  useEffect(() => {
+    setExclusions(data?.unlimited.exclusions ?? []);
+    setAutoEnd(data?.unlimited.autoEnd ?? true);
+  }, [data]);
+  async function updateAutoEnd(next: boolean) {
+    setAutoEnd(next);
+    if (!data?.window.unlimited) return;
+    setPending(true);
+    try {
+      await accountingFetch(workspaceId, "/api/budgets/unlimited", {
+        method: "PATCH",
+        body: JSON.stringify({ active: true, autoEnd: next }),
+      });
+      await reload();
+    } catch (reason) {
+      setAutoEnd(data.unlimited.autoEnd);
+      notify(
+        reason instanceof Error ? reason.message : "Auto-end could not update.",
+        "error",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+  async function saveSettings() {
+    try {
+      await accountingFetch(workspaceId, "/api/budgets/settings", {
+        method: "PATCH",
+        body: JSON.stringify({
+          exclusions,
+          beyondEnabled: data?.beyondLimits.enabled,
+          beyondModels: data?.beyondLimits.models,
+        }),
+      });
+      await reload();
+    } catch (reason) {
+      notify(
+        reason instanceof Error ? reason.message : "Exclusions could not save.",
+        "error",
+      );
+    }
+  }
+  return (
+    <div className="flex flex-col gap-4 pt-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <Badge variant={data?.window.unlimited ? "secondary" : "outline"}>
+            {data?.window.unlimited ? "Active" : "Inactive"}
+          </Badge>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {data?.unlimited.activeSessionId
+              ? "Active session is persisted."
+              : "Each activation is retained in history."}
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox
+              checked={autoEnd}
+              disabled={disabled || pending}
+              onCheckedChange={(value) => void updateAutoEnd(value === true)}
+            />
+            Auto-end at window boundary
+          </label>
+          <Button
+            disabled={disabled || pending}
+            onClick={() => onConfirm(!data?.window.unlimited, autoEnd)}
+          >
+            {data?.window.unlimited ? "Deactivate" : "Activate"}
+          </Button>
+        </div>
+      </div>
+      <ModelSelector
+        title="Excluded routes and models"
+        values={exclusions}
+        options={data?.modelOptions ?? []}
+        disabled={disabled}
+        onChange={setExclusions}
+      />
+      <Button
+        variant="outline"
+        disabled={disabled}
+        onClick={() => void saveSettings()}
+      >
+        Save exclusions
+      </Button>
+      <History history={data?.history ?? []} />
+    </div>
+  );
+}
+function BeyondPolicy({
+  workspaceId,
+  data,
+  reload,
+  disabled,
+}: {
+  workspaceId: string;
+  data?: Data;
+  reload: () => Promise<void>;
+  disabled: boolean;
+}) {
+  const [enabled, setEnabled] = useState(false);
+  const [models, setModels] = useState<string[]>([]);
+  useEffect(() => {
+    setEnabled(data?.beyondLimits.enabled ?? false);
+    setModels(data?.beyondLimits.models ?? []);
+  }, [data]);
+  async function save() {
+    try {
+      await accountingFetch(workspaceId, "/api/budgets/settings", {
+        method: "PATCH",
+        body: JSON.stringify({
+          exclusions: data?.unlimited.exclusions,
+          beyondEnabled: enabled,
+          beyondModels: models,
+        }),
+      });
+      await reload();
+    } catch (reason) {
+      notify(
+        reason instanceof Error
+          ? reason.message
+          : "Beyond Limits could not save.",
+        "error",
+      );
+    }
+  }
+  return (
+    <div className="flex flex-col gap-4 pt-4">
+      <label className="flex items-center gap-2 text-sm">
+        <Switch
+          checked={enabled}
+          disabled={disabled}
+          onCheckedChange={setEnabled}
+        />
+        Enable selected routes after budget exhaustion
+      </label>
+      <ModelSelector
+        title="Allowed routes and models"
+        values={models}
+        options={data?.modelOptions ?? []}
+        disabled={disabled}
+        onChange={setModels}
+      />
+      <Button
+        disabled={disabled || models.length > 100}
+        onClick={() => void save()}
+      >
+        Save Beyond Limits
+      </Button>
+    </div>
+  );
+}
+function ModelSelector({
+  title,
+  values,
+  options,
+  disabled,
+  onChange,
+}: {
+  title: string;
+  values: string[];
+  options: Array<{ id: string; name: string }>;
+  disabled: boolean;
+  onChange: (values: string[]) => void;
 }) {
   return (
-    <>
-      <Confirm
-        open={confirmUnlimited}
-        onOpenChange={setConfirmUnlimited}
-        title={`${unlimited ? "Deactivate" : "Activate"} Unlimited Mode?`}
-        description={unlimited ? "Budget limits will resume immediately." : "All configured budget limits will be bypassed."}
-        onConfirm={() => {
-          setUnlimited((value) => !value);
-          setConfirmUnlimited(false);
-          reportEvent("budgets.unlimited", { workspaceId });
-          notify("Unlimited Mode updated");
-        }}
-      />
-      <Confirm
-        open={Boolean(removeBudget)}
-        onOpenChange={(open) => !open && setRemoveBudget(null)}
-        title={`Delete budget for ${removeBudget?.key}?`}
-        description="This removes the local mock budget and its usage limit."
-        onConfirm={() => {
-          if (removeBudget) setBudgets((items) => items.filter((item) => item.id !== removeBudget.id));
-          setRemoveBudget(null);
-          notify("Budget deleted");
-        }}
-      />
-      <Dialog open={Boolean(edit)} onOpenChange={(open) => !open && setEdit(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Edit budget</DialogTitle>
-            <DialogDescription>Update the weekly limit for {edit?.key}.</DialogDescription>
-          </DialogHeader>
-          <label className="grid gap-2 py-4 text-sm font-medium" htmlFor="edit-budget-limit">
-            Weekly USD limit
-            <Input id="edit-budget-limit" type="number" min="0.01" step="0.01" value={editLimit} onChange={(event) => setEditLimit(event.target.value)} />
-          </label>
-          <DialogFooter>
-            <Button
-              disabled={!Number.isFinite(Number(editLimit)) || Number(editLimit) <= 0}
-              onClick={() => {
-                if (edit) setBudgets((items) => items.map((item) => item.id === edit.id ? { ...item, limit: Number(editLimit) } : item));
-                setEdit(null);
-                notify("Budget updated");
-              }}
-            >
-              Save limit
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
+    <div>
+      <p className="mb-2 text-sm font-medium">
+        {title} ({values.length}/100)
+      </p>
+      <ScrollArea className="h-40 rounded-md border">
+        <div className="flex flex-col gap-2 p-3">
+          {options.map((option) => (
+            <label key={option.id} className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={values.includes(option.id)}
+                disabled={disabled}
+                onCheckedChange={(checked) =>
+                  onChange(
+                    checked
+                      ? [...new Set([...values, option.id])].slice(0, 100)
+                      : values.filter((id) => id !== option.id),
+                  )
+                }
+              />
+              {option.name}{" "}
+              <span className="text-muted-foreground">{option.id}</span>
+            </label>
+          ))}
+        </div>
+      </ScrollArea>
+    </div>
+  );
+}
+function History({ history }: { history: Data["history"] }) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Started</TableHead>
+          <TableHead>Ended</TableHead>
+          <TableHead>Result</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {history.map((item) => (
+          <TableRow key={item.id}>
+            <TableCell>{new Date(item.startedAt).toLocaleString()}</TableCell>
+            <TableCell>
+              {item.endedAt
+                ? new Date(item.endedAt).toLocaleString()
+                : "Active"}
+            </TableCell>
+            <TableCell>{item.endReason ?? "Active"}</TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
   );
 }

@@ -10,7 +10,8 @@ selectors. It returns stable internal model IDs alongside public
 `GET /api/providers/cleanup` reads durable tombstones for the selected active
 workspace, so failed deleted-provider cleanup remains visible after reload.
 
-Saving a provider, credential, or model is separate from private CLIProxy
-projection. The UI displays pending, error, native-execution-pending, and
-deleted-provider cleanup status with a manual retry. A successful configuration
-save does not make `/v1` available; public gateway routing remains gated.
+Saving a projected provider, credential, or model is separate from private
+CLIProxy projection. The UI displays pending, error, applied, and
+deleted-provider cleanup status with a manual retry. Native Responses providers
+apply through the direct executor and do not depend on CLIProxy; public `/v1`
+still requires an active gateway key and resolver-ready model.

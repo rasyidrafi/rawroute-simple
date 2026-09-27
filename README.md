@@ -12,14 +12,21 @@ See [Logging](docs/logging.md) for event coverage and how to instrument new feat
 
 Workspace persistence and the scoped API contract are documented in
 [Workspaces](docs/workspaces.md). Workspace console history is isolated in the
-running server. Provider, OAuth, routing, pricing, and other dashboard controls
-remain browser-only workspace mock fixtures until their persisted APIs are added.
+running server. Provider, OAuth, routing, pricing, budgeting, and usage controls
+use persisted scoped APIs. The Usage page remains a lazy dashboard chunk.
 Gateway keys are persisted workspace resources and authenticate recognized `/v1`
-requests to the owning active workspace. Provider routing is not configured yet,
-so an authenticated recognized request returns `503` with
-`workspace_routing_not_ready`; no request is forwarded to CLIProxy or a provider.
+requests to the owning active workspace. Native Responses providers execute
+directly after the same resolver/key checks; projected and Codex providers use
+private loopback CLIProxy only when its projection and health are ready.
 CLIProxy lifecycle and its internally generated credential remain private
 management implementation details.
+
+The public root (`/`) is an unauthenticated aggregate usage landing. It selects
+only active workspaces through `/api/public/workspaces` and reads the redacted,
+30-second-cacheable `/api/public/dashboard` API. It does not expose dashboard
+administration, keys, credentials, prompts, durable IDs, or private transport
+configuration. See [Operations](docs/operations.md) for health, recovery,
+backup, and targeted ledger reconciliation.
 
 ## Private Testing
 

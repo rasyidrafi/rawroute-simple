@@ -485,6 +485,67 @@ test("cleanup callbacks settle before a failed delete claim is released and can 
   expect(await workspaces.getWorkspace(workspace.id)).toBeUndefined();
 });
 
+test("workspace cleanup extensions run serially to avoid competing SQLite writes", async () => {
+  const workspace = await workspaces.createWorkspace("Serial cleanup");
+  let active = 0;
+  let peak = 0;
+  const enter = async () => {
+    active += 1;
+    peak = Math.max(peak, active);
+    await Bun.sleep(5);
+    active -= 1;
+  };
+  const unregisterFirst = workspaces.registerWorkspaceDeletionExtension({
+    name: "serial-cleanup-first-test",
+    deleteWorkspaceData: enter,
+  });
+  const unregisterSecond = workspaces.registerWorkspaceDeletionExtension({
+    name: "serial-cleanup-second-test",
+    deleteWorkspaceData: enter,
+  });
+
+  try {
+    await workspaces.deleteWorkspace(workspace.id, workspace.name);
+    expect(peak).toBe(1);
+  } finally {
+    unregisterSecond();
+    unregisterFirst();
+  }
+});
+
+test("workspace deletion snapshots extensions before an awaited cleanup", async () => {
+  const workspace = await workspaces.createWorkspace("Snapshot cleanup");
+  let releaseFirst!: () => void;
+  const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  const calls: string[] = [];
+  const unregisterFirst = workspaces.registerWorkspaceDeletionExtension({
+    name: "snapshot-first-test",
+    deleteWorkspaceData: async () => { calls.push("first"); await firstGate; },
+  });
+  const unregisterSecond = workspaces.registerWorkspaceDeletionExtension({
+    name: "snapshot-second-test",
+    deleteWorkspaceData: () => { calls.push("second"); },
+  });
+  let unregisterLate: (() => void) | undefined;
+  try {
+    const deleting = workspaces.deleteWorkspace(workspace.id, workspace.name);
+    await Bun.sleep(1);
+    unregisterSecond();
+    unregisterLate = workspaces.registerWorkspaceDeletionExtension({
+      name: "snapshot-late-test",
+      deleteWorkspaceData: () => { calls.push("late"); },
+    });
+    releaseFirst();
+    await deleting;
+    expect(calls).toEqual(["first", "second"]);
+  } finally {
+    releaseFirst();
+    unregisterLate?.();
+    unregisterSecond();
+    unregisterFirst();
+  }
+});
+
 test("final delete failures release only their claim and support a later retry", async () => {
   const workspace = await workspaces.createWorkspace("Final retry");
   let failed = false;

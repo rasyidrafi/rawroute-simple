@@ -1,40 +1,22 @@
 "use client";
 
-import { KeyRoundIcon } from "lucide-react";
-import { Page } from "@/components/dashboard/page-ui";
+import { useEffect, useState } from "react";
+import { KeyRoundIcon, SaveIcon } from "lucide-react";
+import { notify, Page } from "@/components/dashboard/page-ui";
 import { PasswordChangeForm } from "@/components/dashboard/password-change-form";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel, FieldTitle } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 
-type Props = {
-  onPasswordChanged: () => void | Promise<void>;
-};
+type SettingsValue = { debug?: boolean; loggingToFile?: boolean; usageStatisticsEnabled?: boolean; requestRetry?: number; maxRetryInterval?: number; routingStrategy?: "round-robin" | "fill-first" };
+const routingStrategies = ["round-robin", "fill-first"] as const;
 
-export function Settings({ onPasswordChanged }: Props) {
-  return (
-    <Page>
-      <div className="max-w-2xl">
-        <Card>
-          <CardHeader>
-            <div className="flex items-center gap-2">
-              <KeyRoundIcon className="size-5" />
-              <CardTitle>Admin password</CardTitle>
-            </div>
-            <CardDescription>
-              Change the password used to sign in to this administrator
-              account. You will need to authenticate again after it changes.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <PasswordChangeForm onPasswordChanged={onPasswordChanged} />
-          </CardContent>
-        </Card>
-      </div>
-    </Page>
-  );
+export function Settings({ onPasswordChanged }: { onPasswordChanged: () => void | Promise<void> }) {
+  const [value, setValue] = useState<SettingsValue>({}); const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false);
+  useEffect(() => { void fetch("/api/cliproxy/settings").then(async (response) => { const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.error || "Unable to load CLIProxy settings."); const routingStrategy = routingStrategies.includes(payload.routingStrategy) ? payload.routingStrategy : "round-robin"; setValue({ ...payload, routingStrategy }); }).catch((error: unknown) => notify(error instanceof Error ? error.message : "Unable to load settings.", "error")).finally(() => setLoading(false)); }, []);
+  async function save() { setSaving(true); try { const response = await fetch("/api/cliproxy/settings", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(value) }); const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.error || "Unable to save CLIProxy settings."); notify("CLIProxy settings saved."); } catch (error) { notify(error instanceof Error ? error.message : "Unable to save settings.", "error"); } finally { setSaving(false); } }
+  return <Page><div className="flex max-w-2xl flex-col gap-6"><Card><CardHeader><CardTitle>Global CLIProxy settings</CardTitle><CardDescription>These controls apply to the private shared CLIProxy process, not to an individual workspace.</CardDescription></CardHeader><CardContent><FieldGroup><Field orientation="horizontal"><FieldContent><FieldTitle>Debug logging</FieldTitle><FieldDescription>Enable CLIProxy diagnostic logging.</FieldDescription></FieldContent><Switch checked={Boolean(value.debug)} disabled={loading} onCheckedChange={(debug) => setValue((current) => ({ ...current, debug }))} /></Field><Field orientation="horizontal"><FieldContent><FieldTitle>File logging</FieldTitle><FieldDescription>Write private CLIProxy logs to its managed data directory.</FieldDescription></FieldContent><Switch checked={Boolean(value.loggingToFile)} disabled={loading} onCheckedChange={(loggingToFile) => setValue((current) => ({ ...current, loggingToFile }))} /></Field><Field orientation="horizontal"><FieldContent><FieldTitle>Usage statistics</FieldTitle><FieldDescription>Allow CLIProxy usage statistics.</FieldDescription></FieldContent><Switch checked={Boolean(value.usageStatisticsEnabled)} disabled={loading} onCheckedChange={(usageStatisticsEnabled) => setValue((current) => ({ ...current, usageStatisticsEnabled }))} /></Field><Field><FieldLabel htmlFor="retry">Request retry count</FieldLabel><Input id="retry" type="number" min="0" value={value.requestRetry ?? ""} disabled={loading} onChange={(event) => setValue((current) => ({ ...current, requestRetry: Number(event.target.value) }))} /></Field><Field><FieldLabel htmlFor="interval">Maximum retry interval</FieldLabel><Input id="interval" type="number" min="0" value={value.maxRetryInterval ?? ""} disabled={loading} onChange={(event) => setValue((current) => ({ ...current, maxRetryInterval: Number(event.target.value) }))} /></Field><Field><FieldLabel>Routing strategy</FieldLabel><Select value={value.routingStrategy ?? "round-robin"} onValueChange={(routingStrategy) => setValue((current) => ({ ...current, routingStrategy: routingStrategy as SettingsValue["routingStrategy"] }))} disabled={loading}><SelectTrigger aria-label="Routing strategy"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{routingStrategies.map((strategy) => <SelectItem value={strategy} key={strategy}>{strategy}</SelectItem>)}</SelectGroup></SelectContent></Select><FieldDescription>Choose a CLIProxy-supported routing strategy.</FieldDescription></Field></FieldGroup><Button className="mt-6" disabled={loading || saving} onClick={() => void save()}>{<SaveIcon data-icon="inline-start" />}{saving ? "Saving…" : "Save settings"}</Button></CardContent></Card><Card><CardHeader><CardTitle><KeyRoundIcon data-icon="inline-start" />Password</CardTitle><CardDescription>Changing your password signs out all current sessions.</CardDescription></CardHeader><CardContent><PasswordChangeForm onPasswordChanged={onPasswordChanged} /></CardContent></Card></div></Page>;
 }

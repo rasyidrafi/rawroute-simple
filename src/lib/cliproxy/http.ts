@@ -237,6 +237,20 @@ async function runMutation<T>(operation: () => Promise<T>): Promise<T> {
   });
 }
 
+/**
+ * Shared admission gate for management wrappers that mutate CLIProxy state.
+ * Keeping it here means shutdown waits for the complete remote/local transition
+ * rather than only lifecycle install/start/stop operations.
+ */
+export async function runAdmittedCliproxyMutation<T>(operation: () => Promise<T>): Promise<T> {
+  return await mutationGate.run(async (assertCanStart) => {
+    const status = await getStatus();
+    if (status.operation || status.conflict) throw new HttpError("A CLIProxy operation is already in progress or the listener is in conflict.", 409);
+    assertCanStart();
+    return await operation();
+  });
+}
+
 export function cliproxyStatus(request: BunRequest): Promise<Response> {
   return withManagement(request, async () => json(await getStatus()), 503);
 }

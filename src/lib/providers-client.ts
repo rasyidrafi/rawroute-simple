@@ -21,6 +21,7 @@ export type ProviderDto = {
   protocol: ProviderProtocol;
   authType: ProviderAuthType;
   headers: Record<string, string>;
+  supportPromptCacheKey: boolean;
   enabled: boolean;
   createdAt: number;
   updatedAt: number;
@@ -40,6 +41,8 @@ export type ProviderCredentialDto = {
   key: "__unchanged__";
   enabled: boolean;
   priority: number;
+  rpmLimit?: number;
+  maxConcurrency?: number;
   createdAt: number;
   updatedAt: number;
 };
@@ -52,6 +55,8 @@ export type ProviderModelDto = {
   gatewayModelId: string;
   upstreamModel: string;
   enabled: boolean;
+  source: "custom" | "builtin";
+  reasoningCapability?: { mode: "enabled" | "disabled"; supportedEfforts?: string[] };
   createdAt: number;
   updatedAt: number;
 };
@@ -68,24 +73,14 @@ export type ProviderSyncDto = {
   updatedAt: number;
   deleted: boolean;
 };
-export type ProviderInput = Pick<
-  ProviderDto,
-  | "name"
-  | "prefix"
-  | "baseUrl"
-  | "protocol"
-  | "authType"
-  | "headers"
-  | "enabled"
->;
-export type ProviderModelInput = Pick<
-  ProviderModelDto,
-  "name" | "gatewaySuffix" | "upstreamModel" | "enabled"
->;
+export type ProviderInput = Pick<ProviderDto, "name" | "prefix" | "baseUrl" | "protocol" | "authType" | "headers" | "enabled"> & { supportPromptCacheKey?: boolean };
+export type ProviderModelInput = Pick<ProviderModelDto, "name" | "gatewaySuffix" | "upstreamModel" | "enabled"> & { source?: "custom" | "builtin"; reasoningCapability?: { mode: "enabled" | "disabled"; supportedEfforts?: string[] } };
 export type ProviderCredentialInput = {
   name: string;
   key: string;
   enabled: boolean;
+  rpmLimit?: number | null;
+  maxConcurrency?: number | null;
 };
 export type ProviderCredentialPatch = Partial<ProviderCredentialInput>;
 

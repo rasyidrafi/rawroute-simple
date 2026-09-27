@@ -29,10 +29,9 @@ it also has no implicit Default.
 
 Global settings, authentication, and CLIProxy lifecycle remain global and must
 not infer a workspace from this header. Gateway keys are a persisted workspace resource:
-`GET`/`POST /api/gateway-keys`, `PATCH`/`DELETE /api/gateway-keys/:keyId`, and
-`POST /api/gateway-keys/:keyId/reveal` all require an active workspace header.
-List responses contain metadata only; values are returned only from create and
-explicit reveal responses.
+`GET`/`POST /api/gateway-keys` and `PATCH`/`DELETE /api/gateway-keys/:keyId`
+all require an active workspace header. List responses contain metadata only;
+key values are returned once from creation and have no later reveal endpoint.
 
 ## Gateway authentication and key storage
 
@@ -44,13 +43,13 @@ authentication. A missing, invalid, revoked, deleted, or deleted-workspace key
 also receives 401. Database/authentication failures receive 503 and never fall
 back to CLIProxy's internal credential.
 
-The allowlist is `GET /v1/models` plus `POST` to `/v1/chat/completions`,
-`/v1/completions`, `/v1/responses`, `/v1/messages`, `/v1/embeddings`,
-`/v1/images/generations`, and `/v1/audio/transcriptions`. Other `/v1` paths are
-404 and unsupported methods are 405. The `/v1` root is a stable 404 help error.
-There is intentionally no wildcard forwarding. Until a provider, credential, and
-routing ownership model is implemented, authenticated allowlisted operations
-return a no-store 503 error with code `workspace_routing_not_ready`.
+The public gateway authenticates supported `/v1`, `/openai/v1`, `/v1beta`, and
+Codex compatibility namespaces from the key-derived workspace only. It resolves
+the persisted model/alias/combo catalog, removes client gateway credentials
+before upstream execution, and meters usage in the owner workspace. Unsupported
+paths and methods remain rejected, and private `/v0/management` never forwards.
+Native Responses execution is independent of CLIProxy; projected/Codex members
+require a healthy private loopback process and current projection.
 
 Gateway values are SHA-256 hashed for lookup and AES-256-GCM encrypted for
 administrator reveal. The 32-byte encryption master is generated once at
@@ -89,9 +88,8 @@ The loopback URL and management secret never appear in browser DTOs or logs.
 `openai-chat` projects to `openai-compatibility`; `anthropic-messages` projects to
 `claude-api-key`. Only enabled providers, models, and credentials project. Credential
 order is highest-priority first and CLIProxy routing is set to `fill-first`.
-Anonymous OpenAI-compatible providers are supported. `openai-responses` is stored
-but not projected because there is no native Responses executor; its state is
-`native-execution-pending`.
+Anonymous OpenAI-compatible providers are supported. `openai-responses` uses the
+native direct executor and therefore does not wait for CLIProxy projection.
 
 Provider mutation responses contain a separate `sync` result, so a committed save
 stays successful when CLIProxy is offline. `GET /api/providers/:providerId/sync`
@@ -116,21 +114,18 @@ proxy URLs are normalized away, nonempty proxy URLs remain significant, and stat
 header values and Claude API keys are trimmed with empty headers omitted. A newly derived fingerprint is
 persisted only after an in-lock read proves the namespace has no unowned entry.
 
-The database is authoritative for provider configuration and projection intent. This
-shared CLIProxy transport is administrative configuration isolation, not tenant-
-isolated inference routing. Public `/v1` remains deliberately gated and does not use
-provider data.
+The database is authoritative for provider configuration and projection intent.
+Native credentials are resolved only in their owner workspace. Projected provider
+namespaces and model-share owner/consumer accounting are persisted and scoped;
+the public gateway still never accepts a browser workspace header.
 
 The in-memory console buffer is scoped now: `/api/logs` requires an active workspace
 header, while `/api/logs/global` is the explicit global system view.
 
-The current dashboard Providers controls are still separate browser-memory
-fixtures and are not wired to the persisted provider API yet. Codex, routing,
-budget, and pricing controls are also browser-memory fixtures. They survive page
-navigation and switching back during that browser session, but they do not survive
-a browser reload and are not server-side isolation. The selected workspace ID is
-the only browser-persisted workspace preference. Do not represent those fixtures
-as persisted configuration.
+Dashboard provider, Codex, routing, pricing, budget, and Usage controls use the
+persisted scoped APIs and survive reload. The selected administrator workspace is
+still a browser preference only; it never authorizes a request without the
+explicit workspace header validated by the server.
 
 ## Contract for future scoped resources
 

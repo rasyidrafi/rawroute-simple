@@ -363,12 +363,20 @@ export async function deleteWorkspace(workspaceId: string, confirmation: unknown
   const finishDeletion = await beginWorkspaceDeletion(workspaceId);
 
   try {
-    // Snapshot registration so a late module import cannot alter an in-flight delete.
-    const cleanups = await Promise.allSettled(
-      [...deletionExtensions.values()].map((extension) =>
-        Promise.resolve().then(() => extension.deleteWorkspaceData(workspaceId)),
-      ),
-    );
+    // Snapshot registration so a late module import cannot alter an in-flight
+    // delete. Extensions share the same libSQL database, so serial cleanup is
+    // required: parallel write transactions otherwise turn a valid workspace
+    // deletion into an intermittent SQLITE_BUSY failure.
+    const extensions = [...deletionExtensions.values()];
+    const cleanups: PromiseSettledResult<void>[] = [];
+    for (const extension of extensions) {
+      try {
+        await extension.deleteWorkspaceData(workspaceId);
+        cleanups.push({ status: "fulfilled", value: undefined });
+      } catch (reason) {
+        cleanups.push({ status: "rejected", reason });
+      }
+    }
     if (cleanups.some((result) => result.status === "rejected")) {
       throw new Error("A workspace deletion extension failed.");
     }

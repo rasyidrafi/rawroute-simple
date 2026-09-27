@@ -16,6 +16,7 @@ import {
   updateProviderCredential,
   updateProviderModel,
 } from "./providers";
+import { RoutingError } from "./routing";
 import {
   getProviderSyncStatus,
   listProviderCleanupStatuses,
@@ -39,7 +40,7 @@ function json(body: unknown, status = 200): Response {
   });
 }
 function errorResponse(error: unknown): Response {
-  if (error instanceof RequestScopeError || error instanceof ProviderError)
+  if (error instanceof RequestScopeError || error instanceof ProviderError || error instanceof RoutingError)
     return json({ error: error.message }, error.status);
   // Request input can include credentials. Never reflect or log it, database errors,
   // encryption payloads, or any arbitrary exception text.
@@ -229,6 +230,7 @@ export function postProvider(request: BunRequest): Promise<Response> {
         "authType",
         "headers",
         "enabled",
+        "supportPromptCacheKey",
       ]);
       const provider = await createProvider(
         workspaceId,
@@ -238,8 +240,9 @@ export function postProvider(request: BunRequest): Promise<Response> {
           baseUrl: unknown;
           protocol: unknown;
           authType?: unknown;
-          headers?: unknown;
-          enabled?: unknown;
+           headers?: unknown;
+           enabled?: unknown;
+           supportPromptCacheKey?: unknown;
         },
       );
       return json(
@@ -271,6 +274,7 @@ export function patchProvider(request: BunRequest): Promise<Response> {
         "authType",
         "headers",
         "enabled",
+        "supportPromptCacheKey",
       ]);
       if (!Object.keys(input).length)
         throw new ProviderError("Provider update is required.", 400);
@@ -311,12 +315,12 @@ export function postProviderCredential(request: BunRequest): Promise<Response> {
       const input = nested(
         await readJson(request, ["credential"]),
         "credential",
-        ["name", "key", "enabled"],
+        ["name", "key", "enabled", "rpmLimit", "maxConcurrency"],
       );
       const credential = await createProviderCredential(
         workspaceId,
         id,
-        input as { name: unknown; key: unknown; enabled?: unknown },
+        input as { name: unknown; key: unknown; enabled?: unknown; rpmLimit?: unknown; maxConcurrency?: unknown },
       );
       return json(
         { credential, sync: await reconcileProvider(workspaceId, id) },
@@ -340,7 +344,7 @@ export function patchProviderCredential(
       const input = nested(
         await readJson(request, ["credential"]),
         "credential",
-        ["name", "key", "enabled"],
+        ["name", "key", "enabled", "rpmLimit", "maxConcurrency"],
       );
       if (!Object.keys(input).length)
         throw new ProviderError("Provider credential update is required.", 400);
@@ -410,7 +414,7 @@ export function postProviderModel(request: BunRequest): Promise<Response> {
         "name",
         "gatewaySuffix",
         "upstreamModel",
-        "enabled",
+        "enabled", "source", "reasoningCapability",
       ]);
       const model = await createProviderModel(
         workspaceId,
@@ -419,7 +423,9 @@ export function postProviderModel(request: BunRequest): Promise<Response> {
           name: unknown;
           gatewaySuffix: unknown;
           upstreamModel: unknown;
-          enabled?: unknown;
+           enabled?: unknown;
+           source?: unknown;
+           reasoningCapability?: unknown;
         },
       );
       return json(
@@ -439,7 +445,7 @@ export function patchProviderModel(request: BunRequest): Promise<Response> {
         "name",
         "gatewaySuffix",
         "upstreamModel",
-        "enabled",
+        "enabled", "source", "reasoningCapability",
       ]);
       if (!Object.keys(input).length)
         throw new ProviderError("Provider model update is required.", 400);

@@ -144,10 +144,8 @@ function DashboardContent({
                  <Badge variant="outline" className="hidden sm:inline-flex">
                    {scope === "global"
                       ? "Global"
-                      : activeWorkspace
-                        ? route === "logs" || route === "endpoint"
-                          ? "Workspace"
-                          : "Workspace mock · browser only"
+                       : activeWorkspace
+                         ? "Workspace"
                        : isWorkspaceLoading
                          ? "Loading workspace"
                          : "Workspace unavailable"}

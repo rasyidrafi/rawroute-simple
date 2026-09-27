@@ -371,7 +371,9 @@ function WorkspaceDialogs({
             <DialogHeader>
               <DialogTitle>{editing ? "Rename workspace" : "Create workspace"}</DialogTitle>
               <DialogDescription>
-                Workspace names and ordinary provider desired state are persisted. Routing, pricing, OAuth, and Codex demo controls remain browser-only fixtures.
+                Workspace names, provider state, routing, pricing, and Codex
+                account mappings are persisted. OAuth tokens remain private to
+                CLIProxy.
               </DialogDescription>
             </DialogHeader>
             <FieldGroup className="mt-5">

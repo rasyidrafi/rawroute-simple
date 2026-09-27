@@ -59,6 +59,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { CliproxyManagementPanel } from "@/components/dashboard/cliproxy-management-panel";
 
 type StatusDetails = CliproxyStatus & {
   pid?: number | null;
@@ -423,6 +424,7 @@ export function CliproxyPage() {
         </Card>
 
         <ConnectionDetailsCard status={status} port={port} loading={statusInitialLoading} />
+        <CliproxyManagementPanel />
       </div>
 
       <PendingActionDialog

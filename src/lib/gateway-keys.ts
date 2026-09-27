@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import { homedir } from "node:os";
 import * as path from "node:path";
 import { db } from "./db";
+import { invalidatePublicAnalytics } from "./public-analytics-cache";
 import type { Workspace } from "./workspaces";
 
 const GATEWAY_KEY_SCHEMA_VERSION = 1;
@@ -354,10 +355,12 @@ export async function createGatewayKey(
         `,
         args: [id, workspaceId, name, secretHash(secret), encryptSecret(secret, id, workspaceId), now, now],
       });
-      return {
+      const created: CreatedGatewayKey = {
         key: { id, workspaceId, name, status: "active", createdAt: now, updatedAt: now, revokedAt: null },
         secret,
       };
+      invalidatePublicAnalytics(workspaceId);
+      return created;
     } catch (error) {
       if (!uniqueConstraint(error)) throw error;
       if (customValue !== undefined || attempts === 3) {
@@ -415,6 +418,7 @@ export async function updateGatewayKey(
   if (result.rowsAffected !== 1) throw notFound();
   const key = await getGatewayKey(workspaceId, keyId);
   if (!key) throw notFound();
+  invalidatePublicAnalytics(workspaceId);
   return key;
 }
 
@@ -435,6 +439,16 @@ export async function deleteGatewayKey(workspaceId: string, keyId: string): Prom
     args: [now, now, now, workspaceId, keyId],
   });
   if (result.rowsAffected !== 1) throw notFound();
+  // Accounting ownership is key metadata, not the secret. Tombstoning a key
+  // must stop its future budget configuration without touching immutable usage.
+  try {
+    await db.batch([
+      { sql: "DELETE FROM gateway_budgets WHERE workspace_id = ? AND gateway_key_id = ?", args: [workspaceId, keyId] },
+      { sql: "DELETE FROM budget_counters WHERE workspace_id = ? AND gateway_key_id = ?", args: [workspaceId, keyId] },
+      { sql: "DELETE FROM budget_reservations WHERE workspace_id = ? AND gateway_key_id = ?", args: [workspaceId, keyId] },
+    ], "write");
+  } catch (error) { if (!/no such table/i.test(String(error))) throw error; }
+  invalidatePublicAnalytics(workspaceId);
 }
 
 export async function revealGatewayKey(workspaceId: string, keyId: string): Promise<string> {
@@ -498,4 +512,5 @@ export async function authenticateGatewayKey(value: unknown): Promise<GatewayKey
 /** Idempotent workspace-deletion extension; no ambient/default workspace is used. */
 export async function deleteGatewayKeysForWorkspace(workspaceId: string): Promise<void> {
   await db.execute({ sql: "DELETE FROM gateway_keys WHERE workspace_id = ?", args: [workspaceId] });
+  invalidatePublicAnalytics(workspaceId);
 }

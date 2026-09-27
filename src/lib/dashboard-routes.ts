@@ -54,7 +54,7 @@ export function dashboardScopeForPage(page: unknown): DashboardPageScope | undef
   return dashboardRouteMeta[page as DashboardRoute].scope;
 }
 
-export const dashboardAliases = ["/", "/dashboard", "/dashboard/ai", "/dashboard/tools"] as const;
+export const dashboardAliases = ["/dashboard", "/dashboard/ai", "/dashboard/tools"] as const;
 export const providerDetailPath = "/dashboard/ai/providers/:providerId";
 
 // Decode the URL segment rather than matchPath's param: React Router preserves

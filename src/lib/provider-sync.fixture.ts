@@ -140,6 +140,10 @@ test.serial("projection uses qualified namespaces, enabled models and ordered fi
     expect(remote.strategy).toBe("fill-first");
     expect(remote.openai).toHaveLength(2);
     expect(remote.openai[0]).toMatchObject({ priority: 1, "api-key-entries": [{ "api-key": "second-secret" }], models: [{ alias: "on", name: "on-upstream" }] });
+    expect(remote.openai.every((entry) => entry["support-prompt-cache-key"] === false)).toBe(true);
+    await providers.updateProvider("default", provider.id, { supportPromptCacheKey: true });
+    await sync.reconcileProvider("default", provider.id);
+    expect(remote.openai.every((entry) => entry["support-prompt-cache-key"] === true)).toBe(true);
     expect(String(remote.openai[0].prefix)).not.toBe("public-prefix");
   } finally { remote.restore(); }
 });
@@ -156,12 +160,12 @@ test.serial("upstream model names are significant in OpenAI-compatible compariso
   } finally { remote.restore(); }
 });
 
-test.serial("responses are recorded as native execution pending and never projected", async () => {
+test.serial("responses are recorded as native execution ready and never projected", async () => {
   const remote = managementFixture();
   try {
     const provider = await providers.createProvider("default", { name: "Responses", prefix: "responses", baseUrl: "https://example.test/v1", protocol: "openai-responses", authType: "none" });
     await providers.createProviderModel("default", provider.id, { name: "R", gatewaySuffix: "r", upstreamModel: "r-upstream" });
-    expect(await sync.reconcileProvider("default", provider.id)).toMatchObject({ state: "native-execution-pending" });
+    expect(await sync.reconcileProvider("default", provider.id)).toMatchObject({ state: "applied", appliedRevision: 2 });
     expect(remote.openai).toHaveLength(0);
   } finally { remote.restore(); }
 });
@@ -181,7 +185,7 @@ test.serial("unmanaged namespace collisions are preserved and disable/protocol c
     await sync.reconcileProvider("default", provider.id);
     expect(remote.openai).toHaveLength(0);
     await providers.updateProvider("default", provider.id, { enabled: true, protocol: "openai-responses" });
-    expect(await sync.reconcileProvider("default", provider.id)).toMatchObject({ state: "native-execution-pending" });
+    expect(await sync.reconcileProvider("default", provider.id)).toMatchObject({ state: "applied", appliedRevision: 4 });
     expect(remote.openai).toHaveLength(0);
   } finally { remote.restore(); }
 });
